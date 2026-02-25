@@ -63,10 +63,23 @@ ul,ol{list-style:none}
 
 /* === FLOATING BG NFTs === */
 .floating-nfts{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
-.floating-nft{position:absolute;border-radius:var(--radius);opacity:.06;filter:blur(1px);animation-timing-function:linear;animation-iteration-count:infinite}
+.floating-nft{position:absolute;border-radius:var(--radius);opacity:.12;filter:blur(0px);animation-timing-function:linear;animation-iteration-count:infinite}
 @keyframes drift{0%{transform:translateY(110vh) rotate(0deg)}100%{transform:translateY(-20vh) rotate(25deg)}}
 
-/* === HEADER === */
+/* === LIGHT MODE === */
+body.light{--bg:#f5f5f0;--bg-card:#ffffff;--bg-card-hover:#f0f0ea;--border:#ddd;--border-dim:#e0e0da;--text:#1a1a1a;--text-muted:#555;--text-dim:#888}
+body.light .site-header{background:rgba(245,245,240,.85);border-bottom-color:rgba(0,0,0,.08)}
+body.light .nav-mobile{background:rgba(245,245,240,.98)}
+body.light .glass-card{background:rgba(255,255,255,.85);border-color:var(--border-dim)}
+body.light .coming-soon-overlay{background:rgba(245,245,240,.94)}
+body.light .floating-nft{opacity:.08}
+body.light .nav-toggle span{background:var(--text)}
+body.light .hero::before{background:radial-gradient(ellipse at center top,rgba(245,197,24,.12) 0%,transparent 60%)}
+body.light .nft-search{background:rgba(255,255,255,.9);border-color:var(--border);color:var(--text)}
+body.light .text-gradient-primary{background:linear-gradient(135deg,#d4a800,#b8920a,#d4a800);-webkit-background-clip:text;background-clip:text}
+body.light .text-gradient-glow{background:linear-gradient(135deg,#d4a800,#c49e00);-webkit-background-clip:text;background-clip:text;filter:drop-shadow(0 0 6px rgba(180,140,0,.3))}
+.theme-toggle{display:flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:50%;border:1px solid var(--border);color:var(--text-muted);transition:color .2s,border-color .2s;font-size:1rem;margin-left:.5rem}
+.theme-toggle:hover{color:var(--gold);border-color:var(--gold)}
 .site-header{position:fixed;top:0;left:0;right:0;z-index:100;height:var(--header-h);background:rgba(10,10,10,.6);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid rgba(51,51,51,.5)}
 .site-header .container{display:flex;align-items:center;justify-content:space-between;height:100%}
 .nav-brand{display:flex;align-items:center;gap:.75rem}
@@ -103,14 +116,26 @@ ul,ol{list-style:none}
 .stat-card .val{font-family:var(--font-display);font-weight:700;font-size:1.5rem;color:var(--gold)}
 .stat-card .lbl{font-family:var(--font-mono);font-size:.65rem;color:var(--text-muted);text-transform:uppercase;margin-top:.25rem}
 
-/* Hero carousel */
-.hero-carousel{width:100%;max-width:800px;margin:2.5rem auto 0;overflow:hidden;position:relative;mask-image:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent);-webkit-mask-image:linear-gradient(90deg,transparent,#000 15%,#000 85%,transparent)}
-.hero-carousel-track{display:flex;gap:1rem;animation:scroll-carousel 25s linear infinite;width:max-content}
-.hero-carousel-track:hover{animation-play-state:paused}
-.hero-carousel img{width:120px;height:120px;border-radius:.75rem;object-fit:cover;border:1px solid var(--border-dim);flex-shrink:0;transition:transform .3s,box-shadow .3s}
-.hero-carousel img:hover{transform:scale(1.08);box-shadow:var(--glow)}
-@keyframes scroll-carousel{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
-@media(max-width:480px){.hero-carousel img{width:90px;height:90px}}
+/* Showcase slider */
+.showcase{width:100%;max-width:560px;margin:2.5rem auto 0;position:relative;user-select:none}
+.showcase-track{overflow:hidden;border-radius:var(--radius)}
+.showcase-slide{display:none;flex-direction:column;align-items:center}
+.showcase-slide.active{display:flex}
+.showcase-slide img{width:100%;max-width:360px;aspect-ratio:1;object-fit:contain;border-radius:.75rem;border:2px solid rgba(245,197,24,.3);background:var(--bg-card)}
+.showcase-footer{text-align:center;padding:1rem .5rem .5rem;max-width:400px}
+.showcase-footer .sc-name{font-family:var(--font-display);font-weight:700;font-size:1rem;margin-bottom:.15rem}
+.showcase-footer .sc-tier{font-family:var(--font-mono);font-size:.7rem;color:var(--gold);margin-bottom:.4rem}
+.showcase-footer .sc-desc{font-size:.8rem;color:var(--text-muted);line-height:1.5;max-height:3.6em;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.showcase-footer .sc-stats{font-family:var(--font-mono);font-size:.7rem;color:var(--text-dim);margin-top:.4rem}
+.showcase-nav{position:absolute;top:50%;transform:translateY(-80%);width:36px;height:36px;border-radius:50%;background:rgba(26,26,26,.7);border:1px solid var(--border);color:var(--text-muted);display:flex;align-items:center;justify-content:center;font-size:1.1rem;transition:background .2s,color .2s;z-index:2;backdrop-filter:blur(4px)}
+body.light .showcase-nav{background:rgba(255,255,255,.8)}
+.showcase-nav:hover{background:rgba(245,197,24,.2);color:var(--gold);border-color:var(--gold)}
+.showcase-prev{left:-18px}
+.showcase-next{right:-18px}
+.showcase-dots{display:flex;justify-content:center;gap:.35rem;margin-top:.75rem}
+.showcase-dots span{width:8px;height:8px;border-radius:50%;background:var(--border);transition:background .2s;cursor:pointer}
+.showcase-dots span.active{background:var(--gold)}
+@media(max-width:480px){.showcase-prev{left:4px}.showcase-next{right:4px}.showcase-slide img{max-width:260px}}
 
 /* === NFT SEARCH === */
 .nft-search-wrap{max-width:400px;margin:1.5rem auto;position:relative}
@@ -241,8 +266,9 @@ ul,ol{list-style:none}
     <nav class="nav-links">
       <a href="#collection">Collection</a>
       <a href="#ecosystem">Ecosystem</a>
-      <a href="#links">Links</a>
+      <a href="https://app.xstik.art" target="_blank" rel="noopener noreferrer">NFT APP</a>
       <a href="https://linktr.ee/xrpstik" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;gap:.35rem;color:var(--gold)">LINKTREE <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M7 17L17 7M17 7H7M17 7v10"/></svg></a>
+      <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light mode" title="Toggle light/dark mode">&#x263C;</button>
     </nav>
     <button class="nav-toggle" id="nav-toggle" aria-label="Menu">
       <span></span><span></span><span></span>
@@ -251,8 +277,9 @@ ul,ol{list-style:none}
   <div class="nav-mobile" id="nav-mobile">
     <a href="#collection" onclick="closeMobile()">Collection</a>
     <a href="#ecosystem" onclick="closeMobile()">Ecosystem</a>
-    <a href="#links" onclick="closeMobile()">Links</a>
+    <a href="https://app.xstik.art" target="_blank" rel="noopener noreferrer" onclick="closeMobile()">NFT APP</a>
     <a href="https://linktr.ee/xrpstik" target="_blank" rel="noopener noreferrer" onclick="closeMobile()" style="color:var(--gold)">LINKTREE &#x2197;</a>
+    <a href="#" onclick="event.preventDefault();toggleTheme();closeMobile();" style="color:var(--text-muted)">&#x263C; TOGGLE LIGHT/DARK</a>
   </div>
 </header>
 
@@ -271,9 +298,12 @@ ul,ol{list-style:none}
     <div class="stat-card glass-card"><div class="val">20</div><div class="lbl">Tiers</div></div>
     <div class="stat-card glass-card"><div class="val">XRPL</div><div class="lbl">Blockchain</div></div>
   </div>
-  <!-- Hero NFT Carousel -->
-  <div class="hero-carousel">
-    <div class="hero-carousel-track" id="hero-carousel-track"></div>
+  <!-- Showcase: Diamond, Kryptonight & Legendary -->
+  <div class="showcase" id="showcase">
+    <div class="showcase-track" id="showcase-track"></div>
+    <button class="showcase-nav showcase-prev" onclick="showcaseNav(-1)">&#x2039;</button>
+    <button class="showcase-nav showcase-next" onclick="showcaseNav(1)">&#x203A;</button>
+    <div class="showcase-dots" id="showcase-dots"></div>
   </div>
 </section>
 
@@ -601,7 +631,6 @@ fetch('/nfts-complete.json')
   .then(function(data) {
     allNfts = data;
     renderCollection(getRandomNfts(10));
-    buildHeroCarousel();
     buildFloatingNfts();
   })
   .catch(function(err) { console.error('Failed to load NFTs:', err); });
@@ -676,18 +705,78 @@ function tiltCard(e, el) {
 }
 function resetTilt(el) { el.style.transform = 'perspective(600px) rotateX(0) rotateY(0) scale(1)'; }
 
-/* Hero Carousel */
-function buildHeroCarousel() {
-  var track = document.getElementById('hero-carousel-track');
-  var picks = getRandomNfts(12);
-  var all = picks.concat(picks);
-  all.forEach(function(nft) {
-    var img = document.createElement('img');
-    img.src = getNftImageUrl(nft); img.alt = nft.name; img.loading = 'lazy';
-    img.onerror = function() { this.src = '/placeholder.svg'; };
-    track.appendChild(img);
+/* Theme toggle */
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  var isLight = document.body.classList.contains('light');
+  try { localStorage.setItem('xstik-theme', isLight ? 'light' : 'dark'); } catch(e) {}
+  document.getElementById('theme-toggle').textContent = isLight ? '\u263E' : '\u263C';
+}
+(function() {
+  try {
+    if (localStorage.getItem('xstik-theme') === 'light') {
+      document.body.classList.add('light');
+      document.getElementById('theme-toggle').textContent = '\u263E';
+    }
+  } catch(e) {}
+})();
+document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
+
+/* Showcase slider */
+var showcaseData = [];
+var showcaseIdx = 0;
+function buildShowcase(data) {
+  showcaseData = data;
+  var track = document.getElementById('showcase-track');
+  var dots = document.getElementById('showcase-dots');
+  track.innerHTML = ''; dots.innerHTML = '';
+  data.forEach(function(nft, i) {
+    var slide = document.createElement('div');
+    slide.className = 'showcase-slide' + (i === 0 ? ' active' : '');
+    var imgUrl = nft.nft_data && nft.nft_data.trim() ? nft.nft_data : '/fallback-images/' + nft.tier.toLowerCase().replace(/\s+/g, '-') + '/' + nft.id + '.png';
+    var desc = nft.description || '';
+    // Clean HTML entities
+    desc = desc.replace(/&#x27;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+    var marketUrl = nft.nft_id ? 'https://sologenic.org/nft/' + nft.nft_id + '?network=mainnet' : '#';
+    slide.innerHTML =
+      '<a href="' + marketUrl + '" target="_blank" rel="noopener noreferrer" style="text-decoration:none">' +
+        '<img src="' + imgUrl + '" alt="' + nft.name + '" onerror="this.src=\'/placeholder.svg\'" />' +
+      '</a>' +
+      '<div class="showcase-footer">' +
+        '<div class="sc-name">' + nft.name + '</div>' +
+        '<div class="sc-tier">' + nft.tier + '</div>' +
+        (desc ? '<div class="sc-desc">' + desc + '</div>' : '') +
+        '<div class="sc-stats">' + nft.points + ' pts &middot; ' + nft.floor_price.toLocaleString() + ' XRP</div>' +
+      '</div>';
+    track.appendChild(slide);
+    var dot = document.createElement('span');
+    dot.className = i === 0 ? 'active' : '';
+    dot.onclick = (function(idx) { return function() { showcaseGo(idx); }; })(i);
+    dots.appendChild(dot);
   });
 }
+function showcaseGo(idx) {
+  if (!showcaseData.length) return;
+  showcaseIdx = ((idx % showcaseData.length) + showcaseData.length) % showcaseData.length;
+  document.querySelectorAll('.showcase-slide').forEach(function(s, i) { s.classList.toggle('active', i === showcaseIdx); });
+  document.querySelectorAll('.showcase-dots span').forEach(function(d, i) { d.classList.toggle('active', i === showcaseIdx); });
+}
+function showcaseNav(dir) { showcaseGo(showcaseIdx + dir); }
+// Touch/swipe support
+(function() {
+  var el = document.getElementById('showcase');
+  var startX = 0;
+  el.addEventListener('touchstart', function(e) { startX = e.touches[0].clientX; }, {passive: true});
+  el.addEventListener('touchend', function(e) {
+    var diff = startX - e.changedTouches[0].clientX;
+    if (Math.abs(diff) > 40) showcaseNav(diff > 0 ? 1 : -1);
+  }, {passive: true});
+})();
+// Load showcase data
+fetch('/showcase.json')
+  .then(function(r) { return r.json(); })
+  .then(function(data) { buildShowcase(data); })
+  .catch(function(err) { console.error('Failed to load showcase:', err); });
 
 /* Royal Flush */
 fetch('/royal-flush.json')
