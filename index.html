@@ -621,7 +621,7 @@ function renderCollection(nfts) {
     card.style.transition = 'opacity .4s ease ' + (i * 0.04) + 's, transform .4s ease ' + (i * 0.04) + 's';
     var imgUrl = getNftImageUrl(nft);
     var fallback = getFallbackUrl(nft);
-    var marketUrl = nft.nft_id ? 'https://sologenic.org/nfts/' + nft.nft_id + '?network=mainnet' : 'https://sologenic.org/profile/' + (nft.nft_issuer || 'rGGQVudQM1v1tqUESWZqrEbGDvLR8XKdiY');
+    var marketUrl = (nft.nft_issuer && nft.nft_id) ? 'https://sologenic.org/nfts/' + nft.nft_issuer + '/' + nft.nft_id + '?network=mainnet' : 'https://sologenic.org/profile/' + (nft.nft_issuer || 'rGGQVudQM1v1tqUESWZqrEbGDvLR8XKdiY');
     card.innerHTML =
       '<a href="' + marketUrl + '" target="_blank" rel="noopener noreferrer" class="nft-card-inner" style="display:block;text-decoration:none;color:inherit"><div class="nft-img-wrap" onmousemove="tiltCard(event,this)" onmouseleave="resetTilt(this)">' +
       '<img src="' + imgUrl + '" alt="' + nft.name + '" loading="lazy" data-fallback="' + fallback + '" data-err="' + (imgUrl === fallback ? '1' : '0') + '" onerror="handleNftError(this)" />' +
