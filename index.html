@@ -114,10 +114,10 @@ ul,ol{list-style:none}
 
 /* === NFT SEARCH === */
 .nft-search-wrap{max-width:400px;margin:1.5rem auto;position:relative}
-.nft-search{width:100%;padding:.75rem 1rem .75rem 2.75rem;border-radius:.5rem;border:1px solid var(--border);background:rgba(26,26,26,.8);color:var(--text);font-family:var(--font-body);font-size:.9rem;outline:none;transition:border-color .2s}
+.nft-search{width:100%;padding:.8rem 1rem .8rem 2.5rem;border-radius:.5rem;border:1px solid var(--border);background:rgba(26,26,26,.8);color:var(--text);font-family:var(--font-body);font-size:.9rem;outline:none;transition:border-color .2s}
 .nft-search:focus{border-color:var(--gold)}
 .nft-search::placeholder{color:var(--text-dim)}
-.nft-search-icon{position:absolute;left:.9rem;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none;line-height:0}
+.nft-search-icon{position:absolute;left:.75rem;top:50%;transform:translateY(-50%);color:var(--text-muted);pointer-events:none;display:flex;align-items:center}
 .search-count{text-align:center;font-size:.75rem;color:var(--text-dim);font-family:var(--font-mono);margin-top:.5rem;min-height:1.2em}
 
 /* === NFT COLLECTION === */
@@ -574,14 +574,25 @@ document.querySelectorAll('.anim-hidden').forEach(function(el) { observer.observ
 /* NFT image helpers */
 function getNftImageUrl(nft) {
   if (nft.nft_data && nft.nft_data.trim() !== '') return nft.nft_data;
-  return '/fallback-images/' + nft.tier.toLowerCase().replace(/\s+/g, '-') + '/' + nft.id + '.png';
+  return getFallbackUrl(nft);
 }
 function getFallbackUrl(nft) {
   return '/fallback-images/' + nft.tier.toLowerCase().replace(/\s+/g, '-') + '/' + nft.id + '.png';
 }
-function handleNftError(img, fallbackUrl) {
-  if (img.src !== fallbackUrl && img.src !== location.origin + '/placeholder.svg') { img.src = fallbackUrl; }
-  else { img.src = '/placeholder.svg'; }
+function handleNftError(img) {
+  var stage = parseInt(img.getAttribute('data-err') || '0');
+  if (stage === 0) {
+    // First error: try fallback image
+    var fb = img.getAttribute('data-fallback');
+    if (fb && img.src.indexOf(fb) === -1) {
+      img.setAttribute('data-err', '1');
+      img.src = fb;
+      return;
+    }
+  }
+  // Second error or no fallback: use placeholder
+  img.setAttribute('data-err', '2');
+  img.src = '/placeholder.svg';
 }
 
 /* Load NFTs */
@@ -610,10 +621,10 @@ function renderCollection(nfts) {
     card.style.transition = 'opacity .4s ease ' + (i * 0.04) + 's, transform .4s ease ' + (i * 0.04) + 's';
     var imgUrl = getNftImageUrl(nft);
     var fallback = getFallbackUrl(nft);
-    var marketUrl = nft.protocol === 'xls-20' && nft.nft_id ? 'https://xrp.cafe/nft/' + nft.nft_id : 'https://xrp.cafe/collection/xstik';
+    var marketUrl = nft.nft_id ? 'https://sologenic.org/nfts/' + nft.nft_id : 'https://sologenic.org/profile/' + (nft.nft_issuer || 'rGGQVudQM1v1tqUESWZqrEbGDvLR8XKdiY');
     card.innerHTML =
       '<a href="' + marketUrl + '" target="_blank" rel="noopener noreferrer" class="nft-card-inner" style="display:block;text-decoration:none;color:inherit"><div class="nft-img-wrap" onmousemove="tiltCard(event,this)" onmouseleave="resetTilt(this)">' +
-      '<img src="' + imgUrl + '" alt="' + nft.name + '" loading="lazy" onerror="handleNftError(this,\'' + fallback.replace(/'/g, "\\'") + '\')" />' +
+      '<img src="' + imgUrl + '" alt="' + nft.name + '" loading="lazy" data-fallback="' + fallback + '" data-err="' + (imgUrl === fallback ? '1' : '0') + '" onerror="handleNftError(this)" />' +
       '</div><div class="nft-meta"><div class="nft-name">' + nft.name + '</div>' +
       '<div class="nft-tier">' + nft.tier + '</div>' +
       '<div class="nft-points">' + nft.points + ' pts &middot; ' + nft.floor_price + ' XRP</div></div></a>';
