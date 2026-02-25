@@ -1,0 +1,10 @@
+{
+  "name": "xstik-html",
+  "version": "1.0.0",
+  "description": "xSTIK Game Hub — XRPL NFT Gaming Ecosystem",
+  "type": "module",
+  "dependencies": {
+    "@netlify/functions": "^2.8.1",
+    "xrpl": "^3.0.0"
+  }
+}
