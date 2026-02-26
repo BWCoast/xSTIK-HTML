@@ -539,6 +539,12 @@ function fmtPct(p) { return (p>=0?'+':'')+p.toFixed(2)+'%'; }
 // ═══════════════════════════════════════════════
 // GET DISPLAY VALUES from combined history + live
 // Returns array of numeric values for chosen currency
+//
+// KEY FIX: Never return 0 for missing USD values.
+// If price_usd is null in Supabase, compute it on the fly:
+//   price_xrp × current xrpUsd rate.
+// This ensures charts, trend, momentum, and stats work
+// on ALL timeframes and BOTH XRP/USD views.
 // ═══════════════════════════════════════════════
 function getDisplayValues(symbol) {
   const s    = state[symbol];
@@ -553,7 +559,16 @@ function getDisplayValues(symbol) {
     });
   }
 
-  return rows.map(r => activeCur==='xrp' ? +r.price_xrp : +r.price_usd);
+  return rows.map(r => {
+    const xrp = parseFloat(r.price_xrp);
+    if (activeCur === 'xrp') return xrp > 0 ? xrp : null;
+    // USD: use stored value if valid, otherwise compute from XRP
+    const usd = r.price_usd != null ? parseFloat(r.price_usd) : null;
+    if (usd != null && usd > 0) return usd;
+    // Fallback: compute USD from XRP × current rate
+    if (xrp > 0 && xrpUsd > 0) return xrp * xrpUsd;
+    return null;
+  }).filter(v => v != null && v > 0);
 }
 
 // ═══════════════════════════════════════════════
