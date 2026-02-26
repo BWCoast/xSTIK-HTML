@@ -655,30 +655,37 @@ function setStatus(cls, text) {
 function drawChart(symbol, vals) {
   const canvas = document.getElementById(`chart-${symbol}`);
   const hlWrap = document.getElementById(`hl-${symbol}`);
-  if (!canvas || vals.length < 2) { hlWrap.innerHTML=''; return; }
+  if (!canvas || vals.length < 2) { console.log(`[chart] ${symbol}: SKIP (${vals.length} vals)`); hlWrap.innerHTML=''; return; }
 
   const dpr  = window.devicePixelRatio||1;
   const rect = canvas.getBoundingClientRect();
-  const CW   = (rect.width||400)*dpr;
-  const CH   = (rect.height||80)*dpr;
+  if (rect.width === 0 || rect.height === 0) { console.log(`[chart] ${symbol}: SKIP (canvas 0px)`); return; }
+  const CW   = rect.width*dpr;
+  const CH   = rect.height*dpr;
   canvas.width=CW; canvas.height=CH;
 
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr,dpr);
-  const w=rect.width||400, h=rect.height||80;
+  const w=rect.width, h=rect.height;
   ctx.clearRect(0,0,w,h);
 
   // Filter out zeros/nulls
   const clean = vals.filter(v => v>0);
-  if (clean.length<2){ hlWrap.innerHTML=''; return; }
+  if (clean.length<2){ console.log(`[chart] ${symbol}: SKIP (${clean.length} clean vals)`); hlWrap.innerHTML=''; return; }
+
+  console.log(`[chart] ${symbol}: DRAWING ${clean.length} points on ${Math.round(w)}x${Math.round(h)} canvas`);
 
   const minV  = Math.min(...clean);
   const maxV  = Math.max(...clean);
-  const range = maxV-minV || maxV*0.005 || 1e-9;
+  // When price is flat (min=max), create artificial range centered on the price
+  // so the line draws in the MIDDLE of the chart, not at the bottom
+  const isFlat = maxV === minV;
+  const range = isFlat ? (maxV * 0.01 || 1e-9) : (maxV - minV);
+  const adjMin = isFlat ? minV - range/2 : minV;
   const PT=10, PB=6;
 
   const xOf = i => (i/(clean.length-1))*w;
-  const yOf = v => PT+(1-(v-minV)/range)*(h-PT-PB);
+  const yOf = v => PT+(1-(v-adjMin)/range)*(h-PT-PB);
 
   const isUp = clean[clean.length-1]>=clean[0];
   const col  = isUp ? '#00e87a' : '#ff3b3b';
