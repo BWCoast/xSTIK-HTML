@@ -315,10 +315,104 @@
   }
   .bar-track { width:80px; height:2px; background:var(--border); border-radius:1px; overflow:hidden; }
   .bar-fill { height:100%; background: linear-gradient(90deg, var(--amber), var(--gold)); width:0%; }
+
+  /* ── THEME TOGGLE ── */
+  .theme-toggle {
+    position: absolute; top: 48px; right: 20px;
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 16px;
+    cursor: pointer; background: transparent;
+    transition: color 0.2s, border-color 0.2s;
+    z-index: 10;
+  }
+  .theme-toggle:hover { color: var(--gold); border-color: var(--gold); }
+
+  /* ── LIGHT MODE ── */
+  /* Matches xstik.art main website light theme */
+  body.light {
+    --bg: #f5f5f0;
+    --card: #ffffff;
+    --border: #ddd;
+    --border-gold: rgba(180,140,0,0.18);
+    --muted: #555;
+    --white: #1a1a1a;
+    --green: #00b85e;
+    --red: #d42020;
+    --yellow: #c49e00;
+    --gold: #d4a800;
+    --amber: #b8920a;
+  }
+  body.light {
+    background: var(--bg);
+    color: var(--white);
+  }
+  body.light::before {
+    background-image:
+      linear-gradient(rgba(180,140,0,0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(180,140,0,0.04) 1px, transparent 1px);
+  }
+  body.light::after {
+    background: radial-gradient(ellipse at center, transparent 30%, rgba(245,245,240,0.5) 100%);
+  }
+  body.light .brand-logo {
+    text-shadow: 0 0 20px rgba(180,140,0,0.35), 0 0 60px rgba(180,140,0,0.12);
+  }
+  body.light .brand-divider {
+    background: linear-gradient(90deg, transparent, #c49e00, transparent);
+  }
+  body.light .ctrl-group {
+    background: #f0f0ea;
+    border-color: #ddd;
+  }
+  body.light .ctrl-btn:hover { color: var(--white); background: rgba(0,0,0,0.04); }
+  body.light .ctrl-btn.active {
+    background: rgba(180,140,0,0.12);
+    color: var(--gold);
+  }
+  body.light .ctrl-separator { background: #ddd; }
+  body.light .token-card {
+    background: var(--card);
+    border-color: #e0e0da;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  body.light .token-card:hover { border-color: rgba(180,140,0,0.35); }
+  body.light .corner {
+    border-top-color: var(--gold); border-right-color: var(--gold);
+  }
+  body.light .stat-cell { background: #fafaf8; }
+  body.light .momentum-track { background: #e0e0da; }
+  body.light .momentum-track::after { background: rgba(0,0,0,0.1); }
+  body.light .card-footer { border-top-color: #e0e0da; }
+  body.light .card-footer .val { color: rgba(0,0,0,0.35); }
+  body.light .info-note {
+    background: rgba(180,140,0,0.04);
+    border-color: rgba(180,140,0,0.12);
+  }
+  body.light .bar-track { background: #e0e0da; }
+  body.light .history-loading { background: rgba(255,255,255,0.85); }
+  body.light #status-label { color: rgba(0,0,0,0.4); }
+  body.light .price-main.loading { color: var(--muted); }
+  body.light .price-secondary { color: #777; }
+  @keyframes flashGreenLight {
+    0% { background:rgba(0,184,94,0.08); border-color:rgba(0,184,94,0.3); }
+    100% { background:#ffffff; border-color:#e0e0da; }
+  }
+  @keyframes flashRedLight {
+    0% { background:rgba(212,32,32,0.08); border-color:rgba(212,32,32,0.3); }
+    100% { background:#ffffff; border-color:#e0e0da; }
+  }
+  body.light .token-card.flash-up   { animation: flashGreenLight 0.8s ease forwards; }
+  body.light .token-card.flash-down { animation: flashRedLight   0.8s ease forwards; }
 </style>
 </head>
 <body>
 <div class="page">
+
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light mode" title="Toggle light/dark mode">&#x263C;</button>
 
   <header>
     <span class="brand-logo">xSTIK</span>
@@ -337,16 +431,16 @@
     <!-- Timeframe -->
     <div class="ctrl-group" id="tf-group">
       <button class="ctrl-btn" data-tf="15">15M</button>
-      <button class="ctrl-btn" data-tf="60">1H</button>
-      <button class="ctrl-btn active" data-tf="1440">24H</button>
+      <button class="ctrl-btn active" data-tf="60">1H</button>
+      <button class="ctrl-btn" data-tf="1440">24H</button>
     </div>
 
     <div class="ctrl-separator"></div>
 
     <!-- Currency -->
     <div class="ctrl-group" id="cur-group">
-      <button class="ctrl-btn" data-cur="xrp">XRP</button>
-      <button class="ctrl-btn active" data-cur="usd">USD</button>
+      <button class="ctrl-btn active" data-cur="xrp">XRP</button>
+      <button class="ctrl-btn" data-cur="usd">USD</button>
     </div>
 
   </div>
@@ -384,8 +478,8 @@ const TICK = 300_000; // 5 minutes — matches collector
 // ═══════════════════════════════════════════════
 // UI STATE
 // ═══════════════════════════════════════════════
-let activeTf  = 1440;   // minutes: 15 | 60 | 1440
-let activeCur = 'usd';  // 'xrp' | 'usd'
+let activeTf  = 60;     // minutes: 15 | 60 | 1440
+let activeCur = 'xrp';  // 'xrp' | 'usd'
 
 // Per-token runtime state
 const state = Object.fromEntries(TOKENS.map(t => [t.symbol, {
@@ -429,7 +523,6 @@ async function loadAllHistory() {
   for (const token of TOKENS) {
     const rows = await fetchHistory(token.symbol, activeTf);
     state[token.symbol].history = rows;
-    console.log(`[history] ${token.symbol} tf=${activeTf}m: ${rows.length} rows, first price_xrp=${rows[0]?.price_xrp}, first price_usd=${rows[0]?.price_usd}`);
   }
 }
 
@@ -540,12 +633,6 @@ function fmtPct(p) { return (p>=0?'+':'')+p.toFixed(2)+'%'; }
 // ═══════════════════════════════════════════════
 // GET DISPLAY VALUES from combined history + live
 // Returns array of numeric values for chosen currency
-//
-// KEY FIX: Never return 0 for missing USD values.
-// If price_usd is null in Supabase, compute it on the fly:
-//   price_xrp × current xrpUsd rate.
-// This ensures charts, trend, momentum, and stats work
-// on ALL timeframes and BOTH XRP/USD views.
 // ═══════════════════════════════════════════════
 function getDisplayValues(symbol) {
   const s    = state[symbol];
@@ -560,19 +647,7 @@ function getDisplayValues(symbol) {
     });
   }
 
-  const result = rows.map(r => {
-    const xrp = parseFloat(r.price_xrp);
-    if (activeCur === 'xrp') return xrp > 0 ? xrp : null;
-    // USD: use stored value if valid, otherwise compute from XRP
-    const usd = r.price_usd != null ? parseFloat(r.price_usd) : null;
-    if (usd != null && usd > 0) return usd;
-    // Fallback: compute USD from XRP × current rate
-    if (xrp > 0 && xrpUsd > 0) return xrp * xrpUsd;
-    return null;
-  }).filter(v => v != null && v > 0);
-
-  console.log(`[display] ${symbol} cur=${activeCur}: ${result.length} valid points from ${rows.length} rows`);
-  return result;
+  return rows.map(r => activeCur==='xrp' ? +r.price_xrp : +r.price_usd);
 }
 
 // ═══════════════════════════════════════════════
@@ -655,44 +730,38 @@ function setStatus(cls, text) {
 function drawChart(symbol, vals) {
   const canvas = document.getElementById(`chart-${symbol}`);
   const hlWrap = document.getElementById(`hl-${symbol}`);
-  if (!canvas || vals.length < 2) { console.log(`[chart] ${symbol}: SKIP (${vals.length} vals)`); hlWrap.innerHTML=''; return; }
+  if (!canvas || vals.length < 2) { hlWrap.innerHTML=''; return; }
 
   const dpr  = window.devicePixelRatio||1;
   const rect = canvas.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) { console.log(`[chart] ${symbol}: SKIP (canvas 0px)`); return; }
-  const CW   = rect.width*dpr;
-  const CH   = rect.height*dpr;
+  const CW   = (rect.width||400)*dpr;
+  const CH   = (rect.height||80)*dpr;
   canvas.width=CW; canvas.height=CH;
 
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr,dpr);
-  const w=rect.width, h=rect.height;
+  const w=rect.width||400, h=rect.height||80;
   ctx.clearRect(0,0,w,h);
 
   // Filter out zeros/nulls
   const clean = vals.filter(v => v>0);
-  if (clean.length<2){ console.log(`[chart] ${symbol}: SKIP (${clean.length} clean vals)`); hlWrap.innerHTML=''; return; }
-
-  console.log(`[chart] ${symbol}: DRAWING ${clean.length} points on ${Math.round(w)}x${Math.round(h)} canvas`);
+  if (clean.length<2){ hlWrap.innerHTML=''; return; }
 
   const minV  = Math.min(...clean);
   const maxV  = Math.max(...clean);
-  // When price is flat (min=max), create artificial range centered on the price
-  // so the line draws in the MIDDLE of the chart, not at the bottom
-  const isFlat = maxV === minV;
-  const range = isFlat ? (maxV * 0.01 || 1e-9) : (maxV - minV);
-  const adjMin = isFlat ? minV - range/2 : minV;
+  const range = maxV-minV || maxV*0.005 || 1e-9;
   const PT=10, PB=6;
 
   const xOf = i => (i/(clean.length-1))*w;
-  const yOf = v => PT+(1-(v-adjMin)/range)*(h-PT-PB);
+  const yOf = v => PT+(1-(v-minV)/range)*(h-PT-PB);
 
   const isUp = clean[clean.length-1]>=clean[0];
   const col  = isUp ? '#00e87a' : '#ff3b3b';
   const colA = isUp ? 'rgba(0,232,122,' : 'rgba(255,59,59,';
 
   // Grid lines
-  ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=1;
+  const isLight = document.body.classList.contains('light');
+  ctx.strokeStyle= isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)'; ctx.lineWidth=1;
   [0.25,0.5,0.75].forEach(f=>{
     const y=PT+f*(h-PT-PB);
     ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
@@ -953,6 +1022,30 @@ async function init() {
 window.addEventListener('beforeunload',()=>{
   if(client?.isConnected()) client.disconnect().catch(()=>{});
 });
+
+// ═══════════════════════════════════════════════
+// THEME TOGGLE — matches xstik.art main site
+// ═══════════════════════════════════════════════
+function toggleTheme() {
+  document.body.classList.toggle('light');
+  const isLight = document.body.classList.contains('light');
+  try { localStorage.setItem('xstik-theme', isLight ? 'light' : 'dark'); } catch(e) {}
+  document.getElementById('theme-toggle').textContent = isLight ? '\u263E' : '\u263C';
+  // Redraw charts with correct grid color
+  TOKENS.forEach(t => {
+    const vals = getDisplayValues(t.symbol);
+    drawChart(t.symbol, vals);
+  });
+}
+(function() {
+  try {
+    if (localStorage.getItem('xstik-theme') === 'light') {
+      document.body.classList.add('light');
+      document.getElementById('theme-toggle').textContent = '\u263E';
+    }
+  } catch(e) {}
+})();
+document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
 
 init();
 </script>
