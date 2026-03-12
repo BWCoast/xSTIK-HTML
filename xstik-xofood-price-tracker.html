@@ -554,8 +554,11 @@ function deriveXrpUsdFromHistory() {
 
 // ═══════════════════════════════════════════════
 // XRPL LIVE PRICE
-// FIX 4: guard xrpD > 0 to reject dust/zero offers
-// FIX 4: guard client connection before requesting
+// Uses ASK (sell side) as primary price — matches XPMarket and all DEX feeds.
+// book_offers(taker_gets:token, taker_pays:XRP) = sellers asking for XRP = ASK
+// book_offers(taker_gets:XRP,   taker_pays:token) = buyers offering XRP = BID
+// For illiquid tokens the BID/ASK spread is wide; using BID gives prices
+// ~35–700% below the true market price. ASK = what you pay to buy the token.
 // ═══════════════════════════════════════════════
 async function fetchLivePrice(token) {
   if (!client || !client.isConnected()) return null;
@@ -567,22 +570,23 @@ async function fetchLivePrice(token) {
     } catch { return []; }
   };
 
-  // Side A: pay XRP, receive token
-  const A = await tryBook({ currency:'XRP' }, { currency:token.currency, issuer:token.issuer });
+  // PRIMARY: ASK — taker pays XRP, receives token → sellers' lowest ask price
+  const A = await tryBook({ currency:token.currency, issuer:token.issuer }, { currency:'XRP' });
   if (A.length) {
     const b    = A[0];
-    const xrpD = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0)*1e6;
-    const tokA = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0);
-    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA; // FIX 4: xrpD > 0 added
-  }
-
-  // Side B: pay token, receive XRP (flipped book)
-  const B = await tryBook({ currency:token.currency, issuer:token.issuer }, { currency:'XRP' });
-  if (B.length) {
-    const b    = B[0];
     const tokA = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0);
     const xrpD = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0)*1e6;
-    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA; // FIX 4: xrpD > 0 added
+    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA;
+  }
+
+  // FALLBACK: BID — taker receives XRP, pays token → buyers' best bid price
+  // Only reached when there are zero sell offers (extremely rare).
+  const B = await tryBook({ currency:'XRP' }, { currency:token.currency, issuer:token.issuer });
+  if (B.length) {
+    const b    = B[0];
+    const xrpD = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0)*1e6;
+    const tokA = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0);
+    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA;
   }
 
   return null;
