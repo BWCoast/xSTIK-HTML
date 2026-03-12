@@ -428,11 +428,12 @@
   <!-- ── GLOBAL CONTROLS ── -->
   <div class="controls">
 
-    <!-- Timeframe -->
+    <!-- Timeframe — FIX 5: added 7D button; default active is 24H -->
     <div class="ctrl-group" id="tf-group">
       <button class="ctrl-btn" data-tf="15">15M</button>
-      <button class="ctrl-btn active" data-tf="60">1H</button>
-      <button class="ctrl-btn" data-tf="1440">24H</button>
+      <button class="ctrl-btn" data-tf="60">1H</button>
+      <button class="ctrl-btn active" data-tf="1440">24H</button>
+      <button class="ctrl-btn" data-tf="10080">7D</button>
     </div>
 
     <div class="ctrl-separator"></div>
@@ -447,8 +448,9 @@
 
   <div class="token-grid" id="grid"></div>
 
+  <!-- FIX 2: removed "USD via CoinGecko" — USD rate now derived from stored data -->
   <div class="info-note">
-    Live prices from <strong>XRPL DEX</strong> · History from <strong>Supabase</strong> · USD via CoinGecko · Live tick every <strong>5 min</strong>
+    Live prices from <strong>XRPL DEX</strong> · History from <strong>Supabase</strong> · USD rate from stored data · Live tick every <strong>5 min</strong>
   </div>
 
   <div class="refresh-footer">
@@ -478,31 +480,35 @@ const TICK = 300_000; // 5 minutes — matches collector
 // ═══════════════════════════════════════════════
 // UI STATE
 // ═══════════════════════════════════════════════
-let activeTf  = 60;     // minutes: 15 | 60 | 1440
-let activeCur = 'xrp';  // 'xrp' | 'usd'
+// FIX 1/5: default to 24H — most data, renders immediately on load
+let activeTf  = 1440;  // minutes: 15 | 60 | 1440 | 10080
+let activeCur = 'xrp'; // 'xrp' | 'usd'
 
 // Per-token runtime state
 const state = Object.fromEntries(TOKENS.map(t => [t.symbol, {
   history: [],     // [{fetched_at, price_xrp, price_usd}] from Supabase
-  livePrice: null, // latest live XRP price
-  liveUsd:   null, // latest live USD price
+  livePrice: null, // latest live XRP price (null until XRPL returns)
+  liveUsd:   null, // latest live USD price (derived from xrpUsd rate)
 }]));
 
 let client = null;
-let xrpUsd = 0;
+let xrpUsd = 0;  // XRP/USD rate — derived from stored history, no CoinGecko
 let cdInt  = null;
 
 // ═══════════════════════════════════════════════
 // SUPABASE — fetch history for a given timeframe
+// FIX 5: dynamic limit based on timeframe depth
 // ═══════════════════════════════════════════════
 async function fetchHistory(symbol, minutes) {
   const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
+  // ~1 row per 5 min; add 20% buffer and a floor of 20, cap at 3000
+  const limit = Math.min(3000, Math.max(20, Math.ceil((minutes / 5) * 1.2) + 10));
   const url   = `${SUPABASE_URL}/rest/v1/token_prices`
     + `?select=fetched_at,price_xrp,price_usd`
     + `&symbol=eq.${symbol}`
     + `&fetched_at=gte.${since}`
     + `&order=fetched_at.asc`
-    + `&limit=500`;
+    + `&limit=${limit}`;
 
   try {
     const r = await fetch(url, {
@@ -527,19 +533,34 @@ async function loadAllHistory() {
 }
 
 // ═══════════════════════════════════════════════
-// XRP/USD
+// XRP/USD RATE — FIX 2: derived from stored price_usd/price_xrp ratio
+// No CoinGecko needed — the backend already stores price_usd every 5 min.
+// This is called after loadAllHistory() so history is populated.
 // ═══════════════════════════════════════════════
-async function refreshXrpUsd() {
-  try {
-    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd');
-    if (r.ok) xrpUsd = (await r.json())?.ripple?.usd || 0;
-  } catch(_) {}
+function deriveXrpUsdFromHistory() {
+  for (const token of TOKENS) {
+    const rows = state[token.symbol].history;
+    if (!rows.length) continue;
+    // Use the most recent row to get the implied rate
+    const latest = rows[rows.length - 1];
+    const xrp = +latest.price_xrp;
+    const usd = +latest.price_usd;
+    if (xrp > 0 && usd > 0) {
+      xrpUsd = usd / xrp;
+      return; // Found a valid rate — done
+    }
+  }
+  // No history yet (first-ever run with empty DB) — xrpUsd stays 0
 }
 
 // ═══════════════════════════════════════════════
 // XRPL LIVE PRICE
+// FIX 4: guard xrpD > 0 to reject dust/zero offers
+// FIX 4: guard client connection before requesting
 // ═══════════════════════════════════════════════
 async function fetchLivePrice(token) {
+  if (!client || !client.isConnected()) return null;
+
   const tryBook = async (gets, pays) => {
     try {
       const r = await client.request({ command:'book_offers', taker_gets:gets, taker_pays:pays, limit:5 });
@@ -547,20 +568,24 @@ async function fetchLivePrice(token) {
     } catch { return []; }
   };
 
+  // Side A: pay XRP, receive token
   const A = await tryBook({ currency:'XRP' }, { currency:token.currency, issuer:token.issuer });
   if (A.length) {
-    const b = A[0];
+    const b    = A[0];
     const xrpD = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0)*1e6;
     const tokA = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0);
-    if (tokA > 0) return (xrpD/1e6)/tokA;
+    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA; // FIX 4: xrpD > 0 added
   }
+
+  // Side B: pay token, receive XRP (flipped book)
   const B = await tryBook({ currency:token.currency, issuer:token.issuer }, { currency:'XRP' });
   if (B.length) {
-    const b = B[0];
+    const b    = B[0];
     const tokA = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0);
     const xrpD = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0)*1e6;
-    if (tokA > 0) return (xrpD/1e6)/tokA;
+    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA; // FIX 4: xrpD > 0 added
   }
+
   return null;
 }
 
@@ -622,32 +647,42 @@ function fmtUsd(p) {
   return '$'+p.toFixed(3);
 }
 
-function fmtPrice(xrpVal, usdVal) {
-  return activeCur==='xrp'
-    ? (fmtXrp(xrpVal)+' XRP')
-    : fmtUsd(usdVal);
-}
-
 function fmtPct(p) { return (p>=0?'+':'')+p.toFixed(2)+'%'; }
+
+function tfLabel(tf) {
+  if (tf===15)    return '15M';
+  if (tf===60)    return '1H';
+  if (tf===1440)  return '24H';
+  if (tf===10080) return '7D';
+  return tf+'M';
+}
 
 // ═══════════════════════════════════════════════
 // GET DISPLAY VALUES from combined history + live
-// Returns array of numeric values for chosen currency
+// FIX 3: guard against null live tick corrupting USD series
+// FIX 3: filter zeros (catches +null === 0 coercion)
 // ═══════════════════════════════════════════════
 function getDisplayValues(symbol) {
   const s    = state[symbol];
   const rows = [...s.history];
 
-  // Append current live tick as the most recent point
-  if (s.livePrice !== null) {
-    rows.push({
-      fetched_at: new Date().toISOString(),
-      price_xrp:  s.livePrice,
-      price_usd:  s.liveUsd,
-    });
+  // Append live tick only when the relevant currency value is valid
+  if (s.livePrice !== null && s.livePrice > 0) {
+    const usdVal = s.liveUsd;
+    // In USD mode: skip live tick if we don't have a valid USD value —
+    // appending null here would corrupt the series (+null === 0).
+    if (activeCur !== 'usd' || (usdVal !== null && usdVal > 0)) {
+      rows.push({
+        fetched_at: new Date().toISOString(),
+        price_xrp:  s.livePrice,
+        price_usd:  usdVal,
+      });
+    }
   }
 
-  return rows.map(r => activeCur==='xrp' ? +r.price_xrp : +r.price_usd);
+  return rows
+    .map(r => activeCur==='xrp' ? +r.price_xrp : +r.price_usd)
+    .filter(v => v > 0); // strip nulls-coerced-to-0 and genuine zeros
 }
 
 // ═══════════════════════════════════════════════
@@ -678,13 +713,13 @@ function buildCards() {
       </div>
 
       <div class="price-main loading" id="price-${t.symbol}">
-        <span class="ring"></span> Fetching…
+        <span class="ring"></span> Loading…
       </div>
       <div class="price-secondary" id="price2-${t.symbol}">—</div>
 
       <div class="trend-stats">
         <div class="stat-cell">
-          <span class="stat-label" id="pct-label-${t.symbol}">1H %</span>
+          <span class="stat-label" id="pct-label-${t.symbol}">24H %</span>
           <span class="stat-val" id="stat-pct-${t.symbol}">—</span>
         </div>
         <div class="stat-cell">
@@ -730,7 +765,7 @@ function setStatus(cls, text) {
 function drawChart(symbol, vals) {
   const canvas = document.getElementById(`chart-${symbol}`);
   const hlWrap = document.getElementById(`hl-${symbol}`);
-  if (!canvas || vals.length < 2) { hlWrap.innerHTML=''; return; }
+  if (!canvas || vals.length < 2) { if(hlWrap) hlWrap.innerHTML=''; return; }
 
   const dpr  = window.devicePixelRatio||1;
   const rect = canvas.getBoundingClientRect();
@@ -743,9 +778,9 @@ function drawChart(symbol, vals) {
   const w=rect.width||400, h=rect.height||80;
   ctx.clearRect(0,0,w,h);
 
-  // Filter out zeros/nulls
-  const clean = vals.filter(v => v>0);
-  if (clean.length<2){ hlWrap.innerHTML=''; return; }
+  // vals is already filtered (no zeros) from getDisplayValues
+  const clean = vals;
+  if (clean.length<2){ if(hlWrap) hlWrap.innerHTML=''; return; }
 
   const minV  = Math.min(...clean);
   const maxV  = Math.max(...clean);
@@ -802,12 +837,14 @@ function drawChart(symbol, vals) {
   ctx.shadowBlur=0;
 
   // H/L overlay labels
-  const hiPct=(yOf(clean[hiI])/h)*100;
-  const loPct=(yOf(clean[loI])/h)*100;
-  hlWrap.innerHTML=`
-    <span class="hl-label high" style="top:${Math.max(0,hiPct-2)}%">H</span>
-    <span class="hl-label low"  style="top:${Math.min(88,loPct-2)}%">L</span>
-  `;
+  if (hlWrap) {
+    const hiPct=(yOf(clean[hiI])/h)*100;
+    const loPct=(yOf(clean[loI])/h)*100;
+    hlWrap.innerHTML=`
+      <span class="hl-label high" style="top:${Math.max(0,hiPct-2)}%">H</span>
+      <span class="hl-label low"  style="top:${Math.min(88,loPct-2)}%">L</span>
+    `;
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -834,38 +871,56 @@ function updateMomentumBar(symbol, trend) {
 
 // ═══════════════════════════════════════════════
 // RENDER CARD — using current activeCur + activeTf
+// FIX 1: decoupled from livePrice; falls back to latest history row
+// FIX 3: uses filtered vals (no zero corruption)
 // ═══════════════════════════════════════════════
 function renderCard(token) {
   const s       = state[token.symbol];
   const priceEl = document.getElementById(`price-${token.symbol}`);
   const price2El= document.getElementById(`price2-${token.symbol}`);
   const trendEl = document.getElementById(`trend-${token.symbol}`);
-  const card    = document.getElementById(`card-${token.symbol}`);
 
-  if (s.livePrice === null) {
-    priceEl.className='price-main loading';
-    priceEl.innerHTML='<span class="ring"></span> Fetching…';
+  // ── FIX 1: Determine display prices ──────────────────────────────
+  // Prefer live price; fall back to the latest Supabase history row.
+  // This ensures history data is always shown — even if XRPL is slow.
+  const latestRow  = s.history.length ? s.history[s.history.length - 1] : null;
+  const isLive     = s.livePrice !== null && s.livePrice > 0;
+  const displayXrp = isLive
+    ? s.livePrice
+    : (latestRow ? +latestRow.price_xrp : null);
+  const displayUsd = (s.liveUsd !== null && s.liveUsd > 0)
+    ? s.liveUsd
+    : (latestRow ? +latestRow.price_usd : null);
+  // ─────────────────────────────────────────────────────────────────
+
+  // Nothing to show at all — DB empty and XRPL not connected yet
+  if (displayXrp === null && displayUsd === null) {
+    priceEl.className = 'price-main loading';
+    priceEl.innerHTML = '<span class="ring"></span> Loading…';
     return;
   }
 
-  // ── Primary price display
-  priceEl.className='price-main';
+  // ── Primary price display ──
+  priceEl.className = 'price-main';
   if (activeCur==='xrp') {
-    priceEl.textContent = fmtXrp(s.livePrice)+' XRP';
-    price2El.textContent = s.liveUsd!==null ? fmtUsd(s.liveUsd) : '—';
+    priceEl.textContent  = displayXrp !== null ? fmtXrp(displayXrp)+' XRP' : '—';
+    price2El.textContent = displayUsd !== null ? fmtUsd(displayUsd) : '—';
   } else {
-    priceEl.textContent = fmtUsd(s.liveUsd);
-    price2El.textContent = fmtXrp(s.livePrice)+' XRP';
+    priceEl.textContent  = displayUsd !== null ? fmtUsd(displayUsd) : '—';
+    price2El.textContent = displayXrp !== null ? fmtXrp(displayXrp)+' XRP' : '—';
+  }
+  // Subtle "cached" note when showing history while live is still loading
+  if (!isLive && latestRow) {
+    price2El.textContent += ' · cached';
   }
 
-  // ── Build value series for chart + stats
-  const vals = getDisplayValues(token.symbol);
+  // ── Build value series for chart + stats ──
+  const vals = getDisplayValues(token.symbol); // already filtered > 0
 
-  // ── Period % change (first history point vs current)
+  // ── Period % change ──
   const pctLabel = document.getElementById(`pct-label-${token.symbol}`);
   const pctEl    = document.getElementById(`stat-pct-${token.symbol}`);
-  const tfLabel  = activeTf===15 ? '15M' : activeTf===60 ? '1H' : '24H';
-  if (pctLabel) pctLabel.textContent = tfLabel+' %';
+  if (pctLabel) pctLabel.textContent = tfLabel(activeTf)+' %';
 
   if (vals.length >= 2) {
     const open = vals[0];
@@ -879,33 +934,35 @@ function renderCard(token) {
     if (pctEl) { pctEl.textContent='—'; pctEl.className='stat-val'; }
   }
 
-  // ── High / Low for period
+  // ── High / Low ──
+  // vals is already clean (> 0 only) — no extra filter needed
   const highEl = document.getElementById(`stat-high-${token.symbol}`);
   const lowEl  = document.getElementById(`stat-low-${token.symbol}`);
   if (vals.length>0) {
-    const cleanVals = vals.filter(v=>v>0);
-    const hi = Math.max(...cleanVals);
-    const lo = Math.min(...cleanVals);
+    const hi = Math.max(...vals);
+    const lo = Math.min(...vals);
     if (highEl) highEl.textContent = activeCur==='xrp' ? fmtXrp(hi) : fmtUsd(hi);
     if (lowEl)  lowEl.textContent  = activeCur==='xrp' ? fmtXrp(lo) : fmtUsd(lo);
   }
 
-  // ── Trend
+  // ── Trend ──
   const trend = calcTrend(vals);
   trendEl.className=`trend-badge ${trend.cls}`;
   trendEl.innerHTML=`<span class="trend-icon">${trend.icon}</span> ${trend.label}`;
   updateMomentumBar(token.symbol, trend);
 
-  // ── Chart
+  // ── Chart ──
   drawChart(token.symbol, vals);
 }
 
 // ═══════════════════════════════════════════════
 // LIVE FETCH CYCLE
+// FIX 2: calls deriveXrpUsdFromHistory() instead of refreshXrpUsd()
 // ═══════════════════════════════════════════════
 async function fetchAll() {
   setStatus('live',`Fetching… ${new Date().toLocaleTimeString()}`);
-  await refreshXrpUsd();
+  // FIX 2: derive USD rate from stored history — no CoinGecko needed
+  deriveXrpUsdFromHistory();
 
   for (const token of TOKENS) {
     const price = await fetchLivePrice(token);
@@ -913,11 +970,11 @@ async function fetchAll() {
     const prev  = s.livePrice;
 
     s.livePrice = price;
-    s.liveUsd   = (price!==null && xrpUsd>0) ? price*xrpUsd : null;
+    s.liveUsd   = (price!==null && price>0 && xrpUsd>0) ? price*xrpUsd : null;
 
-    // Flash on change
+    // Flash on price change
     const card = document.getElementById(`card-${token.symbol}`);
-    if (card && prev!==null && price!==null && price!==prev) {
+    if (card && prev!==null && price!==null && price>0 && price!==prev) {
       card.classList.remove('flash-up','flash-down');
       void card.offsetWidth;
       card.classList.add(price>prev?'flash-up':'flash-down');
@@ -933,13 +990,15 @@ async function fetchAll() {
 
 // ═══════════════════════════════════════════════
 // REFRESH HISTORY + RE-RENDER (timeframe switch)
+// FIX 5: tfLabel() helper handles all 4 timeframes
 // ═══════════════════════════════════════════════
 async function switchTimeframe(tf) {
   activeTf = tf;
   setStatus('live','Loading history…');
   await loadAllHistory();
+  deriveXrpUsdFromHistory(); // refresh rate from new window's data
   TOKENS.forEach(t => renderCard(t));
-  setStatus('live',`Live · TF: ${tf===15?'15M':tf===60?'1H':'24H'} · ${activeCur.toUpperCase()}`);
+  setStatus('live',`Live · TF: ${tfLabel(tf)} · ${activeCur.toUpperCase()}`);
 }
 
 // ═══════════════════════════════════════════════
@@ -989,12 +1048,14 @@ document.getElementById('cur-group').addEventListener('click', e => {
 
 // ═══════════════════════════════════════════════
 // INIT
+// FIX 1: renders history data immediately — before live prices arrive
+// FIX 2: removed refreshXrpUsd(); rate derived from history instead
 // ═══════════════════════════════════════════════
 async function init() {
   buildCards();
   setStatus('','Connecting…');
 
-  // Load history and connect to XRPL in parallel
+  // Load Supabase history and connect to XRPL simultaneously
   await Promise.all([
     loadAllHistory(),
     (async () => {
@@ -1002,17 +1063,23 @@ async function init() {
         client = new xrpl.Client(WS);
         await client.connect();
       } catch(e) {
-        setStatus('err','XRPL connection failed: '+e.message);
+        // XRPL failure is non-fatal — history data still renders
+        setStatus('err','XRPL offline · showing history');
       }
     })(),
-    refreshXrpUsd(),
   ]);
 
-  setStatus('live','Connected · Loading live prices…');
+  // FIX 2: derive XRP/USD rate from the history we just loaded
+  deriveXrpUsdFromHistory();
+
+  // FIX 1: render immediately with history — live overlay follows in fetchAll()
+  TOKENS.forEach(t => renderCard(t));
+  setStatus('live','History loaded · Fetching live prices…');
+
   await fetchAll();
 
   setInterval(async ()=>{
-    await loadAllHistory(); // refresh history every tick too
+    await loadAllHistory();
     await fetchAll();
   }, TICK);
 
@@ -1031,7 +1098,7 @@ function toggleTheme() {
   const isLight = document.body.classList.contains('light');
   try { localStorage.setItem('xstik-theme', isLight ? 'light' : 'dark'); } catch(e) {}
   document.getElementById('theme-toggle').textContent = isLight ? '\u263E' : '\u263C';
-  // Redraw charts with correct grid color
+  // Redraw charts with correct grid colour
   TOKENS.forEach(t => {
     const vals = getDisplayValues(t.symbol);
     drawChart(t.symbol, vals);
