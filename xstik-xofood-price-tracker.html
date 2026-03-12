@@ -448,9 +448,8 @@
 
   <div class="token-grid" id="grid"></div>
 
-  <!-- FIX 2: removed "USD via CoinGecko" — USD rate now derived from stored data -->
   <div class="info-note">
-    Live prices from <strong>XRPL DEX</strong> · History from <strong>Supabase</strong> · USD rate from stored data · Live tick every <strong>5 min</strong>
+    Prices from the <strong>XRPL DEX</strong> order book · Stored only on price change · USD from stored data · <strong>STABLE</strong> = no movement in this timeframe window
   </div>
 
   <div class="refresh-footer">
@@ -591,17 +590,41 @@ async function fetchLivePrice(token) {
 
 // ═══════════════════════════════════════════════
 // TREND ENGINE
-// Linear regression slope + recent momentum
+// Linear regression slope (range-normalised) + recent momentum.
+//
+// Key change from prior version: slope is now divided by the observed price
+// RANGE rather than the mean. This makes the engine sensitive to actual
+// relative movement within the timeframe window, regardless of absolute price
+// magnitude. A token that moved 0.1% over 7D will score ~59 (RISING) instead
+// of ~50 (NEUTRAL). Genuinely flat data (range < 0.1% of mean) is labelled
+// STABLE rather than NEUTRAL, communicating illiquid-market state accurately.
 // ═══════════════════════════════════════════════
 function calcTrend(vals) {
   if (vals.length < 3) return { label:'LOADING', cls:'loading-b', icon:'·', score:50 };
 
-  const n = vals.length;
-  let sumX=0,sumY=0,sumXY=0,sumX2=0;
-  for (let i=0;i<n;i++) { sumX+=i; sumY+=vals[i]; sumXY+=i*vals[i]; sumX2+=i*i; }
-  const slope     = (n*sumXY-sumX*sumY)/(n*sumX2-sumX*sumX);
-  const mean      = sumY/n;
-  const slopeNorm = mean>0 ? slope/mean : 0;
+  const n    = vals.length;
+  const minV = Math.min(...vals);
+  const maxV = Math.max(...vals);
+  const range = maxV - minV;
+
+  // STABLE: total price range is less than 0.1% of mean — no meaningful movement
+  // in this timeframe window. Return early with a fixed score of 50.
+  let sumY = 0; for (let i=0;i<n;i++) sumY += vals[i];
+  const mean = sumY / n;
+  if (mean > 0 && range / mean < 0.001) {
+    return { label:'STABLE', cls:'neutral', icon:'—', score:50 };
+  }
+
+  // Linear regression
+  let sumX=0,sumXY=0,sumX2=0;
+  for (let i=0;i<n;i++) { sumX+=i; sumXY+=i*vals[i]; sumX2+=i*i; }
+  const slope = (n*sumXY - sumX*sumY) / (n*sumX2 - sumX*sumX);
+
+  // Range-normalised slope: how many full-range moves does the trend cover?
+  // Falls back to mean-normalised when range is near-zero (prevents div-by-zero).
+  const slopeNorm = (range > mean * 0.001 && range > 0)
+    ? (slope * n) / range
+    : (mean > 0 ? slope / mean : 0);
 
   let recentMom = 0;
   if (n>=6) {
@@ -612,9 +635,10 @@ function calcTrend(vals) {
     recentMom = vals[0]>0 ? (vals[n-1]-vals[0])/vals[0] : 0;
   }
 
+  // slopeNorm is now dimensionless (0–1 range typical) so clamp is widened to ±1
   const combined = slopeNorm*0.6 + recentMom*0.4;
-  const clamped  = Math.max(-0.05, Math.min(0.05, combined));
-  const score    = Math.round(50 + (clamped/0.05)*50);
+  const clamped  = Math.max(-1, Math.min(1, combined));
+  const score    = Math.round(50 + clamped * 50);
 
   let label,cls,icon;
   if      (score>=65){label='BULLISH'; cls='bullish';icon='▲';}
@@ -647,7 +671,13 @@ function fmtUsd(p) {
   return '$'+p.toFixed(3);
 }
 
-function fmtPct(p) { return (p>=0?'+':'')+p.toFixed(2)+'%'; }
+// Show more decimal places for micro-movements so tiny but real changes
+// (e.g. +0.1053% over 7D) are readable rather than rounding to +0.00%.
+function fmtPct(p) {
+  const abs = Math.abs(p);
+  const dec = abs < 0.01 ? 4 : 2;
+  return (p>=0?'+':'') + p.toFixed(dec) + '%';
+}
 
 function tfLabel(tf) {
   if (tf===15)    return '15M';
