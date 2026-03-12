@@ -64,10 +64,14 @@ async function fetchLastStoredPrices() {
 }
 
 // ─── FETCH TOKEN PRICE FROM XRPL DEX ─────────
-// Queries both the ask side and the bid side; returns the midpoint when both
-// are available, or the best available side when only one is present.
-// The midpoint is more representative than the ask alone, and surfaces price
-// changes that happen when the market maker adjusts their quotes.
+// Uses the ASK price (best sell offer) as the primary price, matching what
+// DEX aggregators like XPMarket display. The ASK is what you actually pay to
+// buy the token. The BID (what buyers offer) is typically far lower for
+// illiquid tokens — using it was the root cause of prices being ~35% wrong.
+//
+// book_offers semantics (XRPL):
+//   taker_gets: xSTIK, taker_pays: XRP  →  makers are SELLING xSTIK  →  ASK
+//   taker_gets: XRP,   taker_pays: xSTIK →  makers are BUYING  xSTIK  →  BID
 async function fetchTokenPrice(client, token) {
   const tryBook = async (gets, pays) => {
     try {
@@ -83,35 +87,32 @@ async function fetchTokenPrice(client, token) {
     }
   };
 
-  // Ask side: taker pays token, gets XRP → cheapest token price in XRP
+  // PRIMARY: ASK — taker pays XRP, receives token → seller's lowest ask price
   const askOffers = await tryBook(
-    { currency: "XRP" },
-    { currency: token.currency, issuer: token.issuer }
-  );
-  let askPrice = null;
-  if (askOffers.length) {
-    const b    = askOffers[0];
-    const xrpD = typeof b.TakerGets === "string" ? +b.TakerGets : (+b.TakerGets?.value ?? 0) * 1e6;
-    const tokA = typeof b.TakerPays === "string" ? +b.TakerPays : (+b.TakerPays?.value ?? 0);
-    if (xrpD > 0 && tokA > 0) askPrice = (xrpD / 1e6) / tokA;
-  }
-
-  // Bid side: taker pays XRP, gets token → highest XRP someone will pay per token
-  const bidOffers = await tryBook(
     { currency: token.currency, issuer: token.issuer },
     { currency: "XRP" }
   );
-  let bidPrice = null;
-  if (bidOffers.length) {
-    const b    = bidOffers[0];
+  if (askOffers.length) {
+    const b    = askOffers[0];
     const tokA = typeof b.TakerGets === "string" ? +b.TakerGets : (+b.TakerGets?.value ?? 0);
     const xrpD = typeof b.TakerPays === "string" ? +b.TakerPays : (+b.TakerPays?.value ?? 0) * 1e6;
-    if (xrpD > 0 && tokA > 0) bidPrice = (xrpD / 1e6) / tokA;
+    if (xrpD > 0 && tokA > 0) return (xrpD / 1e6) / tokA;
   }
 
-  // Midpoint when both sides present; otherwise best available
-  if (askPrice !== null && bidPrice !== null) return (askPrice + bidPrice) / 2;
-  return askPrice ?? bidPrice ?? null;
+  // FALLBACK: BID — taker receives XRP, pays token → buyer's best bid price
+  // Only used when there are no sell offers at all (extremely rare).
+  const bidOffers = await tryBook(
+    { currency: "XRP" },
+    { currency: token.currency, issuer: token.issuer }
+  );
+  if (bidOffers.length) {
+    const b    = bidOffers[0];
+    const xrpD = typeof b.TakerGets === "string" ? +b.TakerGets : (+b.TakerGets?.value ?? 0) * 1e6;
+    const tokA = typeof b.TakerPays === "string" ? +b.TakerPays : (+b.TakerPays?.value ?? 0);
+    if (xrpD > 0 && tokA > 0) return (xrpD / 1e6) / tokA;
+  }
+
+  return null;
 }
 
 // ─── WRITE TO SUPABASE ────────────────────────
