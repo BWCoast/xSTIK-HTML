@@ -7,10 +7,6 @@ const SUPABASE_KEY    = process.env.SUPABASE_ANON_KEY;
 const COINGECKO_URL   = "https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd";
 const XRPL_WS         = "wss://xrplcluster.com";
 
-// Skip insert when price changed less than this fraction (relative).
-// Prevents thousands of identical rows filling Supabase for illiquid tokens.
-const DEDUP_THRESHOLD = 0.0001; // 0.01%
-
 const TOKENS = [
   {
     symbol:   "xSTIK",
@@ -34,33 +30,6 @@ async function fetchXrpUsd() {
   } catch {
     return null;
   }
-}
-
-// ─── FETCH LAST STORED PRICE PER SYMBOL ───────
-// Used for deduplication: only insert a new row when the price has actually moved.
-async function fetchLastStoredPrices() {
-  const results = {};
-  for (const token of TOKENS) {
-    try {
-      const url = `${SUPABASE_URL}/rest/v1/token_prices`
-        + `?select=price_xrp`
-        + `&symbol=eq.${token.symbol}`
-        + `&order=fetched_at.desc`
-        + `&limit=1`;
-      const r = await fetch(url, {
-        headers: {
-          "apikey":        SUPABASE_KEY,
-          "Authorization": `Bearer ${SUPABASE_KEY}`,
-        },
-      });
-      if (!r.ok) continue;
-      const rows = await r.json();
-      if (rows.length > 0) results[token.symbol] = +rows[0].price_xrp;
-    } catch {
-      // Non-fatal — missing entry just means no dedup check for this symbol
-    }
-  }
-  return results;
 }
 
 // ─── FETCH TOKEN PRICE FROM XRPL DEX ─────────
@@ -134,56 +103,43 @@ async function insertRows(rows) {
 }
 
 // ─── MAIN HANDLER ─────────────────────────────
-// Runs every 5 minutes via Netlify cron
+// Runs every 5 minutes via Netlify cron.
+// Stores a row every run regardless of price change — matches QFS behaviour.
+// Dense data is required for charts to render correctly on all timeframes.
 export const handler = schedule("*/5 * * * *", async () => {
   console.log(`[collect-prices] Starting run at ${new Date().toISOString()}`);
 
-  // 1. Fetch last stored prices for deduplication check
-  const lastPrices = await fetchLastStoredPrices();
-  console.log(`[collect-prices] Last stored prices: ${JSON.stringify(lastPrices)}`);
-
-  // 2. Get XRP/USD rate
+  // 1. Get XRP/USD rate
   const xrpUsd = await fetchXrpUsd();
   console.log(`[collect-prices] XRP/USD: ${xrpUsd ?? "unavailable"}`);
 
-  // 3. Connect to XRPL
+  // 2. Connect to XRPL
   const client = new xrpl.Client(XRPL_WS);
   await client.connect();
 
   const rows = [];
 
-  // 4. Fetch and filter prices for each token
+  // 3. Fetch price for each token
   for (const token of TOKENS) {
     const priceXrp = await fetchTokenPrice(client, token);
     if (priceXrp === null) {
       console.warn(`[collect-prices] No price found for ${token.symbol} — skipping`);
       continue;
     }
-
-    // Deduplication: skip insert when price hasn't moved beyond threshold
-    const lastXrp = lastPrices[token.symbol];
-    if (lastXrp !== undefined && lastXrp > 0) {
-      const delta = Math.abs(priceXrp - lastXrp) / lastXrp;
-      if (delta < DEDUP_THRESHOLD) {
-        console.log(`[collect-prices] ${token.symbol}: unchanged (${priceXrp.toPrecision(8)} XRP, Δ${(delta * 100).toFixed(5)}%) — skipping`);
-        continue;
-      }
-    }
-
     const priceUsd = xrpUsd !== null ? priceXrp * xrpUsd : null;
     rows.push({ symbol: token.symbol, price_xrp: priceXrp, price_usd: priceUsd });
-    console.log(`[collect-prices] ${token.symbol}: ${priceXrp} XRP / ${priceUsd ?? "?"} USD — queued`);
+    console.log(`[collect-prices] ${token.symbol}: ${priceXrp} XRP / ${priceUsd ?? "?"} USD`);
   }
 
-  // 5. Disconnect XRPL
+  // 4. Disconnect XRPL
   await client.disconnect();
 
-  // 6. Write to Supabase only when something changed
+  // 5. Write to Supabase (only if we got at least one price)
   if (rows.length > 0) {
     await insertRows(rows);
-    console.log(`[collect-prices] Inserted ${rows.length} row(s) into Supabase`);
+    console.log(`[collect-prices] Inserted ${rows.length} rows into Supabase`);
   } else {
-    console.log(`[collect-prices] All prices unchanged — nothing written`);
+    console.warn("[collect-prices] No rows to insert — nothing written");
   }
 
   return { statusCode: 200 };

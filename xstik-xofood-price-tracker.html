@@ -553,6 +553,20 @@ function deriveXrpUsdFromHistory() {
 }
 
 // ═══════════════════════════════════════════════
+// XRP/USD RATE — live from CoinGecko
+// Called on init and every 5-min refresh cycle.
+// Falls back to deriveXrpUsdFromHistory() value if unreachable.
+// ═══════════════════════════════════════════════
+async function fetchXrpUsdRate() {
+  try {
+    const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d?.ripple?.usd > 0) xrpUsd = d.ripple.usd;
+  } catch {}
+}
+
+// ═══════════════════════════════════════════════
 // XRPL LIVE PRICE
 // Uses ASK (sell side) as primary price — matches XPMarket and all DEX feeds.
 // book_offers(taker_gets:token, taker_pays:XRP) = sellers asking for XRP = ASK
@@ -692,9 +706,11 @@ function tfLabel(tf) {
 }
 
 // ═══════════════════════════════════════════════
-// GET DISPLAY VALUES from combined history + live
+// GET DISPLAY VALUES — returns [{t, v}] time-value pairs
 // FIX 3: guard against null live tick corrupting USD series
 // FIX 3: filter zeros (catches +null === 0 coercion)
+// TIME:  prepend synthetic window-start point so sparse tokens (e.g. xOFOOD)
+//        still render a chart and the x-axis covers the full selected window.
 // ═══════════════════════════════════════════════
 function getDisplayValues(symbol) {
   const s    = state[symbol];
@@ -714,9 +730,36 @@ function getDisplayValues(symbol) {
     }
   }
 
-  return rows
-    .map(r => activeCur==='xrp' ? +r.price_xrp : +r.price_usd)
-    .filter(v => v > 0); // strip nulls-coerced-to-0 and genuine zeros
+  let points = rows
+    .map(r => {
+      const t   = new Date(r.fetched_at).getTime();
+      const xrp = +r.price_xrp;
+      let v;
+      if (activeCur === 'xrp') {
+        v = xrp;
+      } else {
+        // Use stored USD if valid; otherwise compute from XRP × live rate.
+        // This mirrors QFS behaviour and prevents blank USD charts when
+        // price_usd is null/missing in older DB rows.
+        const stored = r.price_usd != null ? +r.price_usd : 0;
+        v = (stored > 0) ? stored : (xrp > 0 && xrpUsd > 0 ? xrp * xrpUsd : 0);
+      }
+      return { t, v };
+    })
+    .filter(p => p.v > 0 && isFinite(p.t));
+
+  // If the earliest data point doesn't reach back to the start of the
+  // selected window, prepend a synthetic point at window-open time using the
+  // same price. This keeps the x-axis correctly scaled and lets illiquid
+  // tokens (like xOFOOD) render a flat line rather than showing no chart.
+  if (points.length >= 1) {
+    const windowStart = Date.now() - activeTf * 60 * 1000;
+    if (points[0].t > windowStart + 5 * 60 * 1000) {
+      points.unshift({ t: windowStart, v: points[0].v });
+    }
+  }
+
+  return points;
 }
 
 // ═══════════════════════════════════════════════
@@ -794,12 +837,13 @@ function setStatus(cls, text) {
 }
 
 // ═══════════════════════════════════════════════
-// DRAW CHART
+// DRAW CHART — time-based X axis
+// points: [{t: timestamp_ms, v: price}] from getDisplayValues()
 // ═══════════════════════════════════════════════
-function drawChart(symbol, vals) {
+function drawChart(symbol, points) {
   const canvas = document.getElementById(`chart-${symbol}`);
   const hlWrap = document.getElementById(`hl-${symbol}`);
-  if (!canvas || vals.length < 2) { if(hlWrap) hlWrap.innerHTML=''; return; }
+  if (!canvas || points.length < 2) { if(hlWrap) hlWrap.innerHTML=''; return; }
 
   const dpr  = window.devicePixelRatio||1;
   const rect = canvas.getBoundingClientRect();
@@ -812,19 +856,24 @@ function drawChart(symbol, vals) {
   const w=rect.width||400, h=rect.height||80;
   ctx.clearRect(0,0,w,h);
 
-  // vals is already filtered (no zeros) from getDisplayValues
-  const clean = vals;
-  if (clean.length<2){ if(hlWrap) hlWrap.innerHTML=''; return; }
+  const vals = points.map(p => p.v);
+  if (vals.length < 2) { if(hlWrap) hlWrap.innerHTML=''; return; }
 
-  const minV  = Math.min(...clean);
-  const maxV  = Math.max(...clean);
+  const minV  = Math.min(...vals);
+  const maxV  = Math.max(...vals);
   const range = maxV-minV || maxV*0.005 || 1e-9;
   const PT=10, PB=6;
 
-  const xOf = i => (i/(clean.length-1))*w;
+  // Time-based X axis — position each point by actual timestamp, not array index.
+  // This prevents sparse recent data from being compressed and looking "flat".
+  const times  = points.map(p => p.t);
+  const minT   = times[0];
+  const maxT   = times[times.length - 1];
+  const tRange = maxT - minT || 1;
+  const xOf = i => ((times[i] - minT) / tRange) * w;
   const yOf = v => PT+(1-(v-minV)/range)*(h-PT-PB);
 
-  const isUp = clean[clean.length-1]>=clean[0];
+  const isUp = vals[vals.length-1]>=vals[0];
   const col  = isUp ? '#00e87a' : '#ff3b3b';
   const colA = isUp ? 'rgba(0,232,122,' : 'rgba(255,59,59,';
 
@@ -840,40 +889,40 @@ function drawChart(symbol, vals) {
   const grad=ctx.createLinearGradient(0,0,0,h);
   grad.addColorStop(0,colA+'0.18)'); grad.addColorStop(1,colA+'0)');
   ctx.beginPath(); ctx.moveTo(xOf(0),h);
-  clean.forEach((v,i)=>ctx.lineTo(xOf(i),yOf(v)));
-  ctx.lineTo(xOf(clean.length-1),h); ctx.closePath();
+  vals.forEach((v,i)=>ctx.lineTo(xOf(i),yOf(v)));
+  ctx.lineTo(xOf(vals.length-1),h); ctx.closePath();
   ctx.fillStyle=grad; ctx.fill();
 
   // Line
   ctx.beginPath();
-  clean.forEach((v,i)=>{
+  vals.forEach((v,i)=>{
     if(i===0){ctx.moveTo(xOf(i),yOf(v));return;}
-    const x0=xOf(i-1),y0=yOf(clean[i-1]),x1=xOf(i),y1=yOf(v);
+    const x0=xOf(i-1),y0=yOf(vals[i-1]),x1=xOf(i),y1=yOf(v);
     ctx.bezierCurveTo((x0+x1)/2,y0,(x0+x1)/2,y1,x1,y1);
   });
   ctx.strokeStyle=col; ctx.lineWidth=1.8; ctx.lineJoin='round'; ctx.stroke();
 
   // H/L markers
   let hiI=0,loI=0;
-  clean.forEach((v,i)=>{ if(v>clean[hiI])hiI=i; if(v<clean[loI])loI=i; });
+  vals.forEach((v,i)=>{ if(v>vals[hiI])hiI=i; if(v<vals[loI])loI=i; });
   [[hiI,'#00e87a'],[loI,'#ff3b3b']].forEach(([idx,c])=>{
     ctx.setLineDash([2,4]); ctx.strokeStyle=c+'44'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(0,yOf(clean[idx])); ctx.lineTo(xOf(idx),yOf(clean[idx])); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,yOf(vals[idx])); ctx.lineTo(xOf(idx),yOf(vals[idx])); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.beginPath(); ctx.arc(xOf(idx),yOf(clean[idx]),3,0,Math.PI*2);
+    ctx.beginPath(); ctx.arc(xOf(idx),yOf(vals[idx]),3,0,Math.PI*2);
     ctx.fillStyle=c; ctx.fill();
   });
 
   // Live dot
-  const lx=xOf(clean.length-1),ly=yOf(clean[clean.length-1]);
+  const lx=xOf(vals.length-1),ly=yOf(vals[vals.length-1]);
   ctx.shadowColor=col; ctx.shadowBlur=10;
   ctx.beginPath(); ctx.arc(lx,ly,3.5,0,Math.PI*2); ctx.fillStyle=col; ctx.fill();
   ctx.shadowBlur=0;
 
   // H/L overlay labels
   if (hlWrap) {
-    const hiPct=(yOf(clean[hiI])/h)*100;
-    const loPct=(yOf(clean[loI])/h)*100;
+    const hiPct=(yOf(vals[hiI])/h)*100;
+    const loPct=(yOf(vals[loI])/h)*100;
     hlWrap.innerHTML=`
       <span class="hl-label high" style="top:${Math.max(0,hiPct-2)}%">H</span>
       <span class="hl-label low"  style="top:${Math.min(88,loPct-2)}%">L</span>
@@ -949,7 +998,8 @@ function renderCard(token) {
   }
 
   // ── Build value series for chart + stats ──
-  const vals = getDisplayValues(token.symbol); // already filtered > 0
+  const points = getDisplayValues(token.symbol); // [{t, v}] time-value pairs
+  const vals = points.map(p => p.v);
 
   // ── Period % change ──
   const pctLabel = document.getElementById(`pct-label-${token.symbol}`);
@@ -986,7 +1036,7 @@ function renderCard(token) {
   updateMomentumBar(token.symbol, trend);
 
   // ── Chart ──
-  drawChart(token.symbol, vals);
+  drawChart(token.symbol, points);
 }
 
 // ═══════════════════════════════════════════════
@@ -1089,9 +1139,10 @@ async function init() {
   buildCards();
   setStatus('','Connecting…');
 
-  // Load Supabase history and connect to XRPL simultaneously
+  // Load Supabase history, fetch live XRP/USD rate, and connect to XRPL simultaneously
   await Promise.all([
     loadAllHistory(),
+    fetchXrpUsdRate(),
     (async () => {
       try {
         client = new xrpl.Client(WS);
@@ -1114,6 +1165,7 @@ async function init() {
 
   setInterval(async ()=>{
     await loadAllHistory();
+    await fetchXrpUsdRate();
     await fetchAll();
   }, TICK);
 
@@ -1134,8 +1186,8 @@ function toggleTheme() {
   document.getElementById('theme-toggle').textContent = isLight ? '\u263E' : '\u263C';
   // Redraw charts with correct grid colour
   TOKENS.forEach(t => {
-    const vals = getDisplayValues(t.symbol);
-    drawChart(t.symbol, vals);
+    const points = getDisplayValues(t.symbol);
+    drawChart(t.symbol, points);
   });
 }
 (function() {
