@@ -449,7 +449,7 @@
   <div class="token-grid" id="grid"></div>
 
   <div class="info-note">
-    Prices from the <strong>XRPL DEX</strong> order book · Stored only on price change · USD from stored data · <strong>STABLE</strong> = no movement in this timeframe window
+    Prices from <strong>OnTheDEX</strong> (last traded) · Updated every 5 minutes · USD via CoinGecko XRP rate · <strong>STABLE</strong> = no movement in this timeframe window
   </div>
 
   <div class="refresh-footer">
@@ -460,7 +460,6 @@
 
 </div>
 
-<script src="https://unpkg.com/xrpl@3.0.0/build/xrpl-latest.js"></script>
 <script>
 // ═══════════════════════════════════════════════
 // CONFIG
@@ -469,12 +468,12 @@ const SUPABASE_URL = 'https://obwxsfezyqexjwngcsaa.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9id3hzZmV6eXFleGp3bmdjc2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MTAxOTksImV4cCI6MjA4NzA4NjE5OX0.PujHpJHOYXzfFiGEoi3GoXABg9_DMB8aeKlcefBy6oc';
 
 const TOKENS = [
-  { symbol:'xSTIK',  name:'Official XRP Mascot',  currency:'785354494B000000000000000000000000000000', issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht' },
-  { symbol:'xOFOOD', name:'xSTIK Food Token',      currency:'784F464F4F440000000000000000000000000000', issuer:'rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb' },
+  { symbol:'xSTIK',  name:'Official XRP Mascot', ticker:'xSTIK',  issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht' },
+  { symbol:'xOFOOD', name:'xSTIK Food Token',    ticker:'xOFOOD', issuer:'rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb' },
 ];
 
-const WS   = 'wss://xrplcluster.com';
-const TICK = 300_000; // 5 minutes — matches collector
+const ONTHEDEX_BASE = 'https://api.onthedex.live/public/v1';
+const TICK          = 300_000; // 5 minutes — matches collector
 
 // ═══════════════════════════════════════════════
 // UI STATE
@@ -486,12 +485,11 @@ let activeCur = 'xrp'; // 'xrp' | 'usd'
 // Per-token runtime state
 const state = Object.fromEntries(TOKENS.map(t => [t.symbol, {
   history: [],     // [{fetched_at, price_xrp, price_usd}] from Supabase
-  livePrice: null, // latest live XRP price (null until XRPL returns)
-  liveUsd:   null, // latest live USD price (derived from xrpUsd rate)
+  livePrice: null, // latest live XRP price from OnTheDEX
+  liveUsd:   null, // latest live USD price (livePrice × xrpUsd)
 }]));
 
-let client = null;
-let xrpUsd = 0;  // XRP/USD rate — derived from stored history, no CoinGecko
+let xrpUsd = 0;  // XRP/USD rate from CoinGecko — updated every refresh cycle
 let cdInt  = null;
 
 // ═══════════════════════════════════════════════
@@ -532,30 +530,9 @@ async function loadAllHistory() {
 }
 
 // ═══════════════════════════════════════════════
-// XRP/USD RATE — FIX 2: derived from stored price_usd/price_xrp ratio
-// No CoinGecko needed — the backend already stores price_usd every 5 min.
-// This is called after loadAllHistory() so history is populated.
-// ═══════════════════════════════════════════════
-function deriveXrpUsdFromHistory() {
-  for (const token of TOKENS) {
-    const rows = state[token.symbol].history;
-    if (!rows.length) continue;
-    // Use the most recent row to get the implied rate
-    const latest = rows[rows.length - 1];
-    const xrp = +latest.price_xrp;
-    const usd = +latest.price_usd;
-    if (xrp > 0 && usd > 0) {
-      xrpUsd = usd / xrp;
-      return; // Found a valid rate — done
-    }
-  }
-  // No history yet (first-ever run with empty DB) — xrpUsd stays 0
-}
-
-// ═══════════════════════════════════════════════
 // XRP/USD RATE — live from CoinGecko
 // Called on init and every 5-min refresh cycle.
-// Falls back to deriveXrpUsdFromHistory() value if unreachable.
+// Kept in xrpUsd global; used to derive live USD price from XRP price.
 // ═══════════════════════════════════════════════
 async function fetchXrpUsdRate() {
   try {
@@ -567,43 +544,32 @@ async function fetchXrpUsdRate() {
 }
 
 // ═══════════════════════════════════════════════
-// XRPL LIVE PRICE
-// Uses ASK (sell side) as primary price — matches XPMarket and all DEX feeds.
-// book_offers(taker_gets:token, taker_pays:XRP) = sellers asking for XRP = ASK
-// book_offers(taker_gets:XRP,   taker_pays:token) = buyers offering XRP = BID
-// For illiquid tokens the BID/ASK spread is wide; using BID gives prices
-// ~35–700% below the true market price. ASK = what you pay to buy the token.
+// LIVE PRICE — from OnTheDEX REST API
+// Returns the last-traded price in XRP for the given token.
+//
+// Why OnTheDEX instead of XRPL book_offers:
+//   book_offers only sees currently open orders. For illiquid tokens
+//   (xOFOOD has had no active sell orders for months), book_offers
+//   returns nothing and the price feed breaks entirely.
+//   OnTheDEX tracks every executed DEX trade and always has the last
+//   known trade price — even if no orders are currently open.
+//
+// Endpoint: GET /ticker/TOKEN_NAME.issuer:XRP
+// Response: { pairs: [{ last: price_in_xrp, time: unix_ts, ... }] }
 // ═══════════════════════════════════════════════
 async function fetchLivePrice(token) {
-  if (!client || !client.isConnected()) return null;
-
-  const tryBook = async (gets, pays) => {
-    try {
-      const r = await client.request({ command:'book_offers', taker_gets:gets, taker_pays:pays, limit:5 });
-      return r.result?.offers ?? [];
-    } catch { return []; }
-  };
-
-  // PRIMARY: ASK — taker pays XRP, receives token → sellers' lowest ask price
-  const A = await tryBook({ currency:token.currency, issuer:token.issuer }, { currency:'XRP' });
-  if (A.length) {
-    const b    = A[0];
-    const tokA = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0);
-    const xrpD = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0)*1e6;
-    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA;
+  try {
+    const url = `${ONTHEDEX_BASE}/ticker/${token.ticker}.${token.issuer}:XRP`;
+    const r   = await fetch(url);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const pair = data?.pairs?.[0];
+    if (!pair) return null;
+    const last = pair.last;
+    return (typeof last === 'number' && last > 0) ? last : null;
+  } catch {
+    return null;
   }
-
-  // FALLBACK: BID — taker receives XRP, pays token → buyers' best bid price
-  // Only reached when there are zero sell offers (extremely rare).
-  const B = await tryBook({ currency:'XRP' }, { currency:token.currency, issuer:token.issuer });
-  if (B.length) {
-    const b    = B[0];
-    const xrpD = typeof b.TakerGets==='string' ? +b.TakerGets : (+b.TakerGets?.value??0)*1e6;
-    const tokA = typeof b.TakerPays==='string' ? +b.TakerPays : (+b.TakerPays?.value??0);
-    if (xrpD > 0 && tokA > 0) return (xrpD/1e6)/tokA;
-  }
-
-  return null;
 }
 
 // ═══════════════════════════════════════════════
@@ -1040,13 +1006,10 @@ function renderCard(token) {
 }
 
 // ═══════════════════════════════════════════════
-// LIVE FETCH CYCLE
-// FIX 2: calls deriveXrpUsdFromHistory() instead of refreshXrpUsd()
+// LIVE FETCH CYCLE — queries OnTheDEX for each token's last-traded price
 // ═══════════════════════════════════════════════
 async function fetchAll() {
   setStatus('live',`Fetching… ${new Date().toLocaleTimeString()}`);
-  // FIX 2: derive USD rate from stored history — no CoinGecko needed
-  deriveXrpUsdFromHistory();
 
   for (const token of TOKENS) {
     const price = await fetchLivePrice(token);
@@ -1080,7 +1043,6 @@ async function switchTimeframe(tf) {
   activeTf = tf;
   setStatus('live','Loading history…');
   await loadAllHistory();
-  deriveXrpUsdFromHistory(); // refresh rate from new window's data
   TOKENS.forEach(t => renderCard(t));
   setStatus('live',`Live · TF: ${tfLabel(tf)} · ${activeCur.toUpperCase()}`);
 }
@@ -1132,38 +1094,27 @@ document.getElementById('cur-group').addEventListener('click', e => {
 
 // ═══════════════════════════════════════════════
 // INIT
-// FIX 1: renders history data immediately — before live prices arrive
-// FIX 2: removed refreshXrpUsd(); rate derived from history instead
+// Loads Supabase history + live XRP/USD rate in parallel,
+// renders from history immediately, then overlays live OnTheDEX prices.
+// No XRPL WebSocket connection required.
 // ═══════════════════════════════════════════════
 async function init() {
   buildCards();
-  setStatus('','Connecting…');
+  setStatus('','Loading…');
 
-  // Load Supabase history, fetch live XRP/USD rate, and connect to XRPL simultaneously
+  // Load Supabase history and live XRP/USD rate simultaneously
   await Promise.all([
     loadAllHistory(),
     fetchXrpUsdRate(),
-    (async () => {
-      try {
-        client = new xrpl.Client(WS);
-        await client.connect();
-      } catch(e) {
-        // XRPL failure is non-fatal — history data still renders
-        setStatus('err','XRPL offline · showing history');
-      }
-    })(),
   ]);
 
-  // FIX 2: derive XRP/USD rate from the history we just loaded
-  deriveXrpUsdFromHistory();
-
-  // FIX 1: render immediately with history — live overlay follows in fetchAll()
+  // Render immediately from history — live overlay follows in fetchAll()
   TOKENS.forEach(t => renderCard(t));
   setStatus('live','History loaded · Fetching live prices…');
 
   await fetchAll();
 
-  setInterval(async ()=>{
+  setInterval(async () => {
     await loadAllHistory();
     await fetchXrpUsdRate();
     await fetchAll();
@@ -1171,10 +1122,6 @@ async function init() {
 
   startCountdown();
 }
-
-window.addEventListener('beforeunload',()=>{
-  if(client?.isConnected()) client.disconnect().catch(()=>{});
-});
 
 // ═══════════════════════════════════════════════
 // THEME TOGGLE — matches xstik.art main site

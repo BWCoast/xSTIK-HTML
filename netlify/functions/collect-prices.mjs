@@ -1,22 +1,23 @@
 import { schedule } from "@netlify/functions";
-import * as xrpl from "xrpl";
 
 // ─── CONFIG ───────────────────────────────────
-const SUPABASE_URL    = process.env.SUPABASE_URL;
-const SUPABASE_KEY    = process.env.SUPABASE_ANON_KEY;
-const COINGECKO_URL   = "https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd";
-const XRPL_WS         = "wss://xrplcluster.com";
+const SUPABASE_URL  = process.env.SUPABASE_URL;
+const SUPABASE_KEY  = process.env.SUPABASE_ANON_KEY;
+const COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd";
+const ONTHEDEX_BASE = "https://api.onthedex.live/public/v1";
 
+// Token name is the human-readable ticker OnTheDEX uses (not the hex currency code).
+// OnTheDEX ticker format: TOKEN_NAME.issuer:XRP
 const TOKENS = [
   {
-    symbol:   "xSTIK",
-    currency: "785354494B000000000000000000000000000000",
-    issuer:   "rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht",
+    symbol: "xSTIK",
+    name:   "xSTIK",
+    issuer: "rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht",
   },
   {
-    symbol:   "xOFOOD",
-    currency: "784F464F4F440000000000000000000000000000",
-    issuer:   "rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb",
+    symbol: "xOFOOD",
+    name:   "xOFOOD",
+    issuer: "rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb",
   },
 ];
 
@@ -32,56 +33,28 @@ async function fetchXrpUsd() {
   }
 }
 
-// ─── FETCH TOKEN PRICE FROM XRPL DEX ─────────
-// Uses the ASK price (best sell offer) as the primary price, matching what
-// DEX aggregators like XPMarket display. The ASK is what you actually pay to
-// buy the token. The BID (what buyers offer) is typically far lower for
-// illiquid tokens — using it was the root cause of prices being ~35% wrong.
+// ─── FETCH TOKEN PRICE FROM ONTHEDEX ─────────
+// OnTheDEX returns the last-traded price from actual DEX execution history.
+// Unlike book_offers (which only sees current open orders), this works for
+// illiquid tokens with no active orders — it always has the last known trade.
 //
-// book_offers semantics (XRPL):
-//   taker_gets: xSTIK, taker_pays: XRP  →  makers are SELLING xSTIK  →  ASK
-//   taker_gets: XRP,   taker_pays: xSTIK →  makers are BUYING  xSTIK  →  BID
-async function fetchTokenPrice(client, token) {
-  const tryBook = async (gets, pays) => {
-    try {
-      const r = await client.request({
-        command:     "book_offers",
-        taker_gets:  gets,
-        taker_pays:  pays,
-        limit:       5,
-      });
-      return r.result?.offers ?? [];
-    } catch {
-      return [];
-    }
-  };
-
-  // PRIMARY: ASK — taker pays XRP, receives token → seller's lowest ask price
-  const askOffers = await tryBook(
-    { currency: token.currency, issuer: token.issuer },
-    { currency: "XRP" }
-  );
-  if (askOffers.length) {
-    const b    = askOffers[0];
-    const tokA = typeof b.TakerGets === "string" ? +b.TakerGets : (+b.TakerGets?.value ?? 0);
-    const xrpD = typeof b.TakerPays === "string" ? +b.TakerPays : (+b.TakerPays?.value ?? 0) * 1e6;
-    if (xrpD > 0 && tokA > 0) return (xrpD / 1e6) / tokA;
+// Endpoint: GET /ticker/TOKEN_NAME.issuer:XRP
+// Response: { pairs: [{ last: price_in_xrp, time: unix_ts, ... }] }
+//
+// `last` = price of the most recent executed trade, expressed in XRP per token.
+async function fetchTokenPrice(token) {
+  try {
+    const url = `${ONTHEDEX_BASE}/ticker/${token.name}.${token.issuer}:XRP`;
+    const r   = await fetch(url);
+    if (!r.ok) return null;
+    const data = await r.json();
+    const pair = data?.pairs?.[0];
+    if (!pair) return null;
+    const last = pair.last;
+    return (typeof last === "number" && last > 0) ? last : null;
+  } catch {
+    return null;
   }
-
-  // FALLBACK: BID — taker receives XRP, pays token → buyer's best bid price
-  // Only used when there are no sell offers at all (extremely rare).
-  const bidOffers = await tryBook(
-    { currency: "XRP" },
-    { currency: token.currency, issuer: token.issuer }
-  );
-  if (bidOffers.length) {
-    const b    = bidOffers[0];
-    const xrpD = typeof b.TakerGets === "string" ? +b.TakerGets : (+b.TakerGets?.value ?? 0) * 1e6;
-    const tokA = typeof b.TakerPays === "string" ? +b.TakerPays : (+b.TakerPays?.value ?? 0);
-    if (xrpD > 0 && tokA > 0) return (xrpD / 1e6) / tokA;
-  }
-
-  return null;
 }
 
 // ─── WRITE TO SUPABASE ────────────────────────
@@ -113,15 +86,11 @@ export const handler = schedule("*/5 * * * *", async () => {
   const xrpUsd = await fetchXrpUsd();
   console.log(`[collect-prices] XRP/USD: ${xrpUsd ?? "unavailable"}`);
 
-  // 2. Connect to XRPL
-  const client = new xrpl.Client(XRPL_WS);
-  await client.connect();
-
   const rows = [];
 
-  // 3. Fetch price for each token
+  // 2. Fetch last-traded price for each token from OnTheDEX
   for (const token of TOKENS) {
-    const priceXrp = await fetchTokenPrice(client, token);
+    const priceXrp = await fetchTokenPrice(token);
     if (priceXrp === null) {
       console.warn(`[collect-prices] No price found for ${token.symbol} — skipping`);
       continue;
@@ -131,10 +100,7 @@ export const handler = schedule("*/5 * * * *", async () => {
     console.log(`[collect-prices] ${token.symbol}: ${priceXrp} XRP / ${priceUsd ?? "?"} USD`);
   }
 
-  // 4. Disconnect XRPL
-  await client.disconnect();
-
-  // 5. Write to Supabase (only if we got at least one price)
+  // 3. Write to Supabase (only if we got at least one price)
   if (rows.length > 0) {
     await insertRows(rows);
     console.log(`[collect-prices] Inserted ${rows.length} rows into Supabase`);
