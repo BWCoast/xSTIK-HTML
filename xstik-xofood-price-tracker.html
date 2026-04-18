@@ -468,11 +468,12 @@ const SUPABASE_URL = 'https://obwxsfezyqexjwngcsaa.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9id3hzZmV6eXFleGp3bmdjc2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MTAxOTksImV4cCI6MjA4NzA4NjE5OX0.PujHpJHOYXzfFiGEoi3GoXABg9_DMB8aeKlcefBy6oc';
 
 const TOKENS = [
-  { symbol:'xSTIK',  name:'Official XRP Mascot', ticker:'xSTIK',  issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht' },
-  { symbol:'xOFOOD', name:'xSTIK Food Token',    ticker:'xOFOOD', issuer:'rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb' },
+  { symbol:'xSTIK',  name:'Official XRP Mascot', ticker:'xSTIK',  issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht', source:'onthedex' },
+  { symbol:'xOFOOD', name:'xSTIK Food Token',    currency:'784F464F4F440000000000000000000000000000', issuer:'rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb', source:'xrpl_account_tx' },
 ];
 
 const ONTHEDEX_BASE = 'https://api.onthedex.live/public/v1';
+const XRPL_HTTP     = 'https://xrplcluster.com/';
 const TICK          = 300_000; // 5 minutes — matches collector
 
 // ═══════════════════════════════════════════════
@@ -544,20 +545,11 @@ async function fetchXrpUsdRate() {
 }
 
 // ═══════════════════════════════════════════════
-// LIVE PRICE — from OnTheDEX REST API
-// Returns the last-traded price in XRP for the given token.
-//
-// Why OnTheDEX instead of XRPL book_offers:
-//   book_offers only sees currently open orders. For illiquid tokens
-//   (xOFOOD has had no active sell orders for months), book_offers
-//   returns nothing and the price feed breaks entirely.
-//   OnTheDEX tracks every executed DEX trade and always has the last
-//   known trade price — even if no orders are currently open.
-//
-// Endpoint: GET /ticker/TOKEN_NAME.issuer:XRP
-// Response: { pairs: [{ last: price_in_xrp, time: unix_ts, ... }] }
+// LIVE PRICE — OnTheDEX (xSTIK)
+// xSTIK trades appear as OfferCreate crosses, which OnTheDEX indexes.
+// Returns the last-traded price in XRP.
 // ═══════════════════════════════════════════════
-async function fetchLivePrice(token) {
+async function fetchOnthedexPrice(token) {
   try {
     const url = `${ONTHEDEX_BASE}/ticker/${token.ticker}.${token.issuer}:XRP`;
     const r   = await fetch(url);
@@ -570,6 +562,71 @@ async function fetchLivePrice(token) {
   } catch {
     return null;
   }
+}
+
+// ═══════════════════════════════════════════════
+// LIVE PRICE — XRPL account_tx (xOFOOD)
+// xOFOOD trades are cross-currency Payments, NOT OfferCreate crosses.
+// OnTheDEX misses them entirely. We query account_tx on the issuer
+// and find the most recent BUY where:
+//   tx.SendMax           = XRP drops (string) — what the buyer paid
+//   meta.delivered_amount = xOFOOD object    — what was actually received
+// Price = parseInt(sendMax)/1e6 / parseFloat(deliveredAmount.value)
+// ═══════════════════════════════════════════════
+const MAX_TOKEN_PER_TX = 1_000_000; // filter out "sell unlimited" orders
+
+async function fetchXrplAccountTxPrice(token) {
+  try {
+    const resp = await fetch(XRPL_HTTP, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        method: 'account_tx',
+        params: [{
+          account:          token.issuer,
+          limit:            50,
+          ledger_index_min: -1,
+          ledger_index_max: -1,
+        }],
+      }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const txns = data?.result?.transactions ?? [];
+
+    for (const item of txns) {
+      const tx   = item.tx_json ?? item.tx;
+      const meta = item.meta    ?? item.metaData;
+      if (!tx || !meta || meta.TransactionResult !== 'tesSUCCESS') continue;
+      if (tx.TransactionType !== 'Payment') continue;
+
+      const sm = tx.SendMax;
+      const da = meta.delivered_amount;
+
+      // BUY: sendMax is XRP drops (string), deliveredAmount is the token (object)
+      if (typeof sm !== 'string') continue;
+      if (typeof da !== 'object') continue;
+      if (da.currency !== token.currency || da.issuer !== token.issuer) continue;
+
+      const xrpPaid    = parseInt(sm, 10) / 1e6;
+      const tokenRecvd = parseFloat(da.value);
+
+      if (tokenRecvd <= 0 || tokenRecvd > MAX_TOKEN_PER_TX) continue;
+      if (xrpPaid <= 0) continue;
+
+      return xrpPaid / tokenRecvd; // XRP per token
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Price router ────────────────────────────────────────────────────────────
+async function fetchLivePrice(token) {
+  if (token.source === 'onthedex')        return fetchOnthedexPrice(token);
+  if (token.source === 'xrpl_account_tx') return fetchXrplAccountTxPrice(token);
+  return null;
 }
 
 // ═══════════════════════════════════════════════
