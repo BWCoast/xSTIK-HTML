@@ -449,7 +449,7 @@
   <div class="token-grid" id="grid"></div>
 
   <div class="info-note">
-    Prices from <strong>OnTheDEX</strong> (last traded) · Updated every 5 minutes · USD via CoinGecko XRP rate · <strong>STABLE</strong> = no movement in this timeframe window
+    Prices from <strong>XRPL</strong> (last traded payment) · Updated every 5 minutes · USD via CoinGecko XRP rate · <strong>STABLE</strong> = no movement in this timeframe window
   </div>
 
   <div class="refresh-footer">
@@ -468,7 +468,7 @@ const SUPABASE_URL = 'https://obwxsfezyqexjwngcsaa.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9id3hzZmV6eXFleGp3bmdjc2FhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE1MTAxOTksImV4cCI6MjA4NzA4NjE5OX0.PujHpJHOYXzfFiGEoi3GoXABg9_DMB8aeKlcefBy6oc';
 
 const TOKENS = [
-  { symbol:'xSTIK',  name:'Official XRP Mascot', ticker:'xSTIK',  issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht', source:'onthedex' },
+  { symbol:'xSTIK',  name:'Official XRP Mascot', currency:'785354494B000000000000000000000000000000', issuer:'rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht', source:'xrpl_account_tx' },
   { symbol:'xOFOOD', name:'xSTIK Food Token',    currency:'784F464F4F440000000000000000000000000000', issuer:'rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb', source:'xrpl_account_tx' },
 ];
 
@@ -565,8 +565,8 @@ async function fetchOnthedexPrice(token) {
 }
 
 // ═══════════════════════════════════════════════
-// LIVE PRICE — XRPL account_tx (xOFOOD)
-// xOFOOD trades are cross-currency Payments, NOT OfferCreate crosses.
+// LIVE PRICE — XRPL account_tx (xSTIK + xOFOOD)
+// Both tokens trade as cross-currency Payments, NOT OfferCreate crosses.
 // OnTheDEX misses them entirely. We query account_tx on the issuer
 // and find the most recent BUY where:
 //   tx.SendMax           = XRP drops (string) — what the buyer paid

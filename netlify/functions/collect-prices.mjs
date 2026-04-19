@@ -4,19 +4,18 @@ import { schedule } from "@netlify/functions";
 const SUPABASE_URL  = process.env.SUPABASE_URL;
 const SUPABASE_KEY  = process.env.SUPABASE_ANON_KEY;
 const COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=ripple&vs_currencies=usd";
-const ONTHEDEX_BASE = "https://api.onthedex.live/public/v1";
 const XRPL_HTTP     = "https://xrplcluster.com/";
 
 const TOKENS = [
   {
     symbol:   "xSTIK",
-    source:   "onthedex",          // indexed by OnTheDEX — last-traded price available
-    ticker:   "xSTIK",
+    source:   "xrpl_account_tx",   // trades are cross-currency Payments, not OfferCreate crosses
+    currency: "785354494B000000000000000000000000000000",
     issuer:   "rJNV9i4Q6zvRhpE2zjxgkvff3eGHQohZht",
   },
   {
     symbol:   "xOFOOD",
-    source:   "xrpl_account_tx",   // trades are cross-currency Payments, not offers
+    source:   "xrpl_account_tx",   // trades are cross-currency Payments, not OfferCreate crosses
     currency: "784F464F4F440000000000000000000000000000",
     issuer:   "rQJdoz8sM3qupab9qjnbC6YFYmHreWPpNb",
   },
@@ -34,45 +33,22 @@ async function fetchXrpUsd() {
   }
 }
 
-// ─── PRICE: OnTheDEX last-traded (xSTIK) ─────
-// OnTheDEX indexes actual DEX offer executions. Works for xSTIK because its
-// trades appear as OfferCreate crosses in the XRPL ledger.
+// ─── PRICE: XRPL account_tx (xSTIK + xOFOOD) ────
+// Both tokens trade as XRPL cross-currency Payment transactions,
+// NOT as OfferCreate crosses. DEX aggregators like OnTheDEX miss them.
 //
-// Endpoint: GET /ticker/TOKEN_NAME.issuer:XRP
-// Response: { pairs: [{ last: price_in_xrp, ... }] }
-async function fetchOnthedexPrice(token) {
-  try {
-    const url = `${ONTHEDEX_BASE}/ticker/${token.ticker}.${token.issuer}:XRP`;
-    const r   = await fetch(url);
-    if (!r.ok) return null;
-    const data = await r.json();
-    const pair = data?.pairs?.[0];
-    if (!pair) return null;
-    const last = pair.last;
-    return (typeof last === "number" && last > 0) ? last : null;
-  } catch {
-    return null;
-  }
-}
-
-// ─── PRICE: XRPL account_tx (xOFOOD) ─────────
-// xOFOOD trades are executed as XRPL cross-currency Payment transactions,
-// NOT as OfferCreate crosses. This means DEX aggregators like OnTheDEX do
-// not see them — they only watch offer books.
-//
-// Strategy: query account_tx for the xOFOOD issuer. When users buy xOFOOD
+// Strategy: query account_tx for the token issuer. When users buy a token
 // with XRP via a cross-currency Payment, the transaction appears here with:
 //   tx.SendMax  = XRP string in drops  (max XRP the buyer was willing to pay)
-//   meta.delivered_amount = xOFOOD object (actual xOFOOD received)
+//   meta.delivered_amount = token object (actual tokens received)
 //
 // Price in XRP/token = parseInt(sendMax) / 1e6 / parseFloat(deliveredAmount.value)
 //
-// The "SELL" side of these pairs sets sendMax to 9000000000000000 xOFOOD
-// (essentially unlimited), which produces nonsense prices — filtered by the
-// MAX_XOFOOD_PER_TX guard below.
+// The "SELL" side sets sendMax to an absurdly large token amount (≈9e15),
+// producing nonsense prices — filtered by the MAX_TOKEN_PER_TX guard below.
 //
 // Uses plain fetch() POST to the XRPL HTTP cluster — no xrpl.js needed.
-const MAX_XOFOOD_PER_TX = 1_000_000; // any delivery above this is a "sell any amount" order
+const MAX_TOKEN_PER_TX = 1_000_000; // any delivery above this is a "sell any amount" order
 
 async function fetchXrplAccountTxPrice(token) {
   try {
@@ -115,7 +91,7 @@ async function fetchXrplAccountTxPrice(token) {
 
       // Filter out "unlimited sell" orders where sendMax is a tiny XRP amount
       // but deliveredAmount.value is absurdly large (seller set limit to huge number)
-      if (tokenRecvd <= 0 || tokenRecvd > MAX_XOFOOD_PER_TX) continue;
+      if (tokenRecvd <= 0 || tokenRecvd > MAX_TOKEN_PER_TX) continue;
       if (xrpPaid <= 0) continue;
 
       const priceXrp = xrpPaid / tokenRecvd;
@@ -133,7 +109,6 @@ async function fetchXrplAccountTxPrice(token) {
 
 // ─── PRICE ROUTER ─────────────────────────────
 async function fetchTokenPrice(token) {
-  if (token.source === "onthedex")        return fetchOnthedexPrice(token);
   if (token.source === "xrpl_account_tx") return fetchXrplAccountTxPrice(token);
   return null;
 }
