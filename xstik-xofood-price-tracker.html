@@ -430,10 +430,10 @@
 
     <!-- Timeframe — FIX 5: added 7D button; default active is 24H -->
     <div class="ctrl-group" id="tf-group">
-      <button class="ctrl-btn" data-tf="15">15M</button>
       <button class="ctrl-btn" data-tf="60">1H</button>
       <button class="ctrl-btn active" data-tf="1440">24H</button>
       <button class="ctrl-btn" data-tf="10080">7D</button>
+      <button class="ctrl-btn" data-tf="43200">1M</button>
     </div>
 
     <div class="ctrl-separator"></div>
@@ -480,7 +480,7 @@ const TICK          = 300_000; // 5 minutes — matches collector
 // UI STATE
 // ═══════════════════════════════════════════════
 // FIX 1/5: default to 24H — most data, renders immediately on load
-let activeTf  = 1440;  // minutes: 15 | 60 | 1440 | 10080
+let activeTf  = 1440;  // minutes: 60 | 1440 | 10080 | 43200
 let activeCur = 'xrp'; // 'xrp' | 'usd'
 
 // Per-token runtime state
@@ -500,7 +500,7 @@ let cdInt  = null;
 async function fetchHistory(symbol, minutes) {
   const since = new Date(Date.now() - minutes * 60 * 1000).toISOString();
   // ~1 row per 5 min; add 20% buffer and a floor of 20, cap at 3000
-  const limit = Math.min(3000, Math.max(20, Math.ceil((minutes / 5) * 1.2) + 10));
+  const limit = Math.min(9000, Math.max(20, Math.ceil((minutes / 5) * 1.2) + 10));
   const url   = `${SUPABASE_URL}/rest/v1/token_prices`
     + `?select=fetched_at,price_xrp,price_usd`
     + `&symbol=eq.${symbol}`
@@ -721,10 +721,10 @@ function fmtPct(p) {
 }
 
 function tfLabel(tf) {
-  if (tf===15)    return '15M';
   if (tf===60)    return '1H';
   if (tf===1440)  return '24H';
   if (tf===10080) return '7D';
+  if (tf===43200) return '1M';
   return tf+'M';
 }
 
