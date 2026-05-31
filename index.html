@@ -712,7 +712,7 @@ function renderCollection(nfts) {
       '<img src="' + imgUrl + '" alt="' + nft.name + '" loading="lazy" data-fallback="' + fallback + '" data-err="' + (imgUrl === fallback ? '1' : '0') + '" onerror="handleNftError(this)" />' +
       '</div><div class="nft-meta"><div class="nft-name">' + nft.name + '</div>' +
       '<div class="nft-tier">' + nft.tier + '</div>' +
-      '<div class="nft-points">' + nft.points + ' pts &middot; ' + nft.floor_price + ' XRP</div></div></a>';
+      '<div class="nft-points">' + nft.points + ' pts</div></div></a>';
     grid.appendChild(card);
     requestAnimationFrame(function() { card.style.opacity = '1'; card.style.transform = 'translateY(0)'; });
   });
@@ -802,7 +802,7 @@ function buildShowcase(data) {
         '<div class="sc-name">' + nft.name + '</div>' +
         '<div class="sc-tier">' + nft.tier + '</div>' +
         (desc ? '<div class="sc-desc">' + desc + '</div>' : '') +
-        '<div class="sc-stats">' + nft.points + ' pts &middot; ' + nft.floor_price.toLocaleString() + ' XRP</div>' +
+        '<div class="sc-stats">' + nft.points + ' pts</div>' +
       '</div>';
     track.appendChild(slide);
     var dot = document.createElement('span');
