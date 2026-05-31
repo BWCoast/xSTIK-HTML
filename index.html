@@ -683,7 +683,9 @@ function handleNftError(img) {
 fetch('/nfts-complete.json')
   .then(function(r) { return r.json(); })
   .then(function(data) {
-    allNfts = data;
+    /* Exclude NFTs flagged no_image (no remote image + no fallback art).
+       Filtering here keeps them out of every view: grid, shuffle, search, floating. */
+    allNfts = data.filter(function(n) { return !n.no_image; });
     renderCollection(getRandomNfts(10));
     buildFloatingNfts();
   })
