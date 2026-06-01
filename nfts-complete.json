@@ -5166,9 +5166,10 @@
     "points": 6,
     "tier_order": 7,
     "floor_price": 1500,
-    "nft_data": "https://ipfs.io/ipfs/QmPtZM1FY4uuNNodRvNMPfsJqH7v7bZHGzmUsjwrMjtQ3E",
+    "nft_data": "",
     "marketplace": "onXRP",
-    "nft_burned": false
+    "nft_burned": false,
+    "no_image": true
   },
   {
     "id": "540",
@@ -16907,9 +16908,10 @@
     "points": 3,
     "tier_order": 13,
     "floor_price": 1000,
-    "nft_data": "https://storage.googleapis.com/nft-assets-public/data/rBCv3Jj5EMwtKBdFmiqzeJHjPE4hZzxP3K/80973",
+    "nft_data": "",
     "marketplace": "Sologenic",
-    "nft_burned": false
+    "nft_burned": false,
+    "no_image": true
   },
   {
     "id": "1289",

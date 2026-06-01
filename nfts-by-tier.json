@@ -20007,12 +20007,13 @@
       "points": 6,
       "tier_order": 7,
       "floor_price": 1500,
-      "nft_data": "https://ipfs.io/ipfs/QmPtZM1FY4uuNNodRvNMPfsJqH7v7bZHGzmUsjwrMjtQ3E",
+      "nft_data": "",
       "nft_uri": "ipfs://QmexnMJC33EvP969vWXb6pXNPXJx23K7c1qJ8QwwDKB2BR",
       "marketplace": "onXRP",
       "description": "",
       "nft_owner": "rBnfqFMJF4MS1GZCFv8c3z3q7De3yKQwjq",
-      "nft_burned": false
+      "nft_burned": false,
+      "no_image": true
     },
     {
       "id": "538",
@@ -27974,12 +27975,13 @@
       "points": 3,
       "tier_order": 13,
       "floor_price": 1000,
-      "nft_data": "https://storage.googleapis.com/nft-assets-public/data/rBCv3Jj5EMwtKBdFmiqzeJHjPE4hZzxP3K/80973",
+      "nft_data": "",
       "nft_uri": "https://ipfs.io/ipfs/bafybeidgyhlcbktkkbgd7ml2eidhh6ibyjt6v5thq4ggkcfmd7vz7bzg64/metadata.json",
       "marketplace": "Sologenic",
       "description": "",
       "nft_owner": "rwMpmrs5LV2NCabqcYz8u96X6BPCuhsrGs",
-      "nft_burned": false
+      "nft_burned": false,
+      "no_image": true
     },
     {
       "id": "1330",
